@@ -1,0 +1,19 @@
+[package]
+name = "rust-webrtc-test"
+version = "0.1.0"
+authors = ["SpiralP <spiral.palmer@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+futures = "0.3.6"
+async-std = "1.6.5"
+structopt = { version = "0.3.19", default-features = false }
+anyhow = "1.0.33"
+rand = "0.7.3"
+async-tungstenite = { version = "0.8.0", features = ["async-std-runtime", "async-native-tls"] }
+gstreamer = { version = "0.16.3", features = ["v1_14"] }
+gstreamer-webrtc = "0.16.3"
+gstreamer-sdp = { version = "0.16.3", features = ["v1_14"] }
+serde = "1.0.116"
+serde_derive = "1.0.116"
+serde_json = "1.0.58"
