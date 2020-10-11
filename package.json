@@ -1,0 +1,15 @@
+{
+  "name": "rust-webrtc-test",
+  "version": "1.0.0",
+  "main": "index.js",
+  "author": "SpiralP <spiral.palmer@gmail.com>",
+  "license": "MIT",
+  "scripts": {
+    "build": "parcel build web/index.html",
+    "dev": "parcel serve web/index.html"
+  },
+  "devDependencies": {
+    "parcel-bundler": "^1.12.3",
+    "typescript": "^4.0.3"
+  }
+}
