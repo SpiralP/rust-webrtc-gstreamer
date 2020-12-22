@@ -1,6 +1,36 @@
+<!DOCTYPE html>
 <html>
-  <head></head>
+  <head>
+    <style>
+      body {
+        padding: 0;
+        margin: 0;
+        overflow: hidden;
+        background-color: #000000;
+      }
+      video {
+        display: block;
+        margin-left: auto;
+        margin-right: auto;
+      }
+    </style>
+  </head>
+
   <body>
+    <script src="https://webrtchacks.github.io/adapter/adapter-latest.js"></script>
+    <video id="video" autoplay controls></video>
+    <script>
+      const player = document.getElementById("video");
+      function updateSize() {
+        player.width = window.innerWidth;
+        player.height = window.innerHeight;
+      }
+
+      window.addEventListener("resize", () => {
+        updateSize();
+      });
+      updateSize();
+    </script>
     <script src="index.ts"></script>
   </body>
 </html>

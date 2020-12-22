@@ -1,21 +1,23 @@
 [package]
-name = "rust-webrtc-test"
+name = "rust-webrtc-gstreamer"
 version = "0.1.0"
 authors = ["SpiralP <spiral.palmer@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-anyhow = "1.0.33"
-async-std = { version = "1.6.5", features = ["attributes"] }
-async-tungstenite = { version = "0.8.0", features = ["async-std-runtime"] }
-futures = "0.3.6"
-gstreamer = { version = "0.16.3", features = ["v1_18"] }
-gstreamer-audio = { version = "0.16.3", features = ["v1_18"] }
-gstreamer-rtp = { version = "0.16.3", features = ["v1_18"] }
-gstreamer-sdp = { version = "0.16.3", features = ["v1_18"] }
-gstreamer-video = { version = "0.16.3", features = ["v1_18"] }
-gstreamer-webrtc = { version = "0.16.3", features = ["v1_18"] }
-serde = "1.0.116"
-serde_derive = "1.0.116"
-serde_json = "1.0.58"
-structopt = { version = "0.3.19", default-features = false }
+anyhow = "1.0.36"
+async-std = { version = "1.8.0", features = ["attributes"] }
+async-tungstenite = { version = "0.10.0", features = ["async-std-runtime"] }
+futures = "0.3.8"
+glib = "0.10.3"
+gstreamer = "0.16.5"
+gstreamer-audio = "0.16.5"
+gstreamer-rtp = "0.16.5"
+gstreamer-sdp = "0.16.6"
+gstreamer-video = "0.16.6"
+gstreamer-webrtc = "0.16.5"
+num_cpus = "1.13.0"
+serde = "1.0.118"
+serde_derive = "1.0.118"
+serde_json = "1.0.60"
+structopt = { version = "0.3.21", default-features = false }

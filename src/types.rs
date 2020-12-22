@@ -1,10 +1,20 @@
 use serde_derive::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
 pub struct Args {
-    #[structopt(short, long, default_value = "127.0.0.1:2222")]
-    pub server: String,
+    #[structopt(long, default_value = "127.0.0.1:8080")]
+    pub signal_server: String,
+
+    #[structopt(long, default_value = "127.0.0.1:1935")]
+    pub stream_server: SocketAddr,
+
+    #[structopt(long, default_value = "5")]
+    pub cpu_used: i8,
+
+    #[structopt(long, default_value = "2000")]
+    pub video_bitrate: u16,
 }
 
 // JSON messages we communicate with
@@ -12,6 +22,11 @@ pub struct Args {
 #[serde(rename_all = "camelCase")]
 pub enum JsonMsg {
     Sdp(String),
+    #[serde(rename_all = "camelCase")]
+    Ice {
+        candidate: String,
+        sdp_m_line_index: u32,
+    },
 }
 
 #[test]

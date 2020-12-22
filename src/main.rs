@@ -1,4 +1,4 @@
-#![recursion_limit = "512"]
+#![recursion_limit = "1024"]
 // to fix "a=fingerprint:sha-256 (null)"
 // export OPENSSL_CONF=""
 // a=candidate:1 1 UDP 2147483647 123.123.123.123 50007 typ host
