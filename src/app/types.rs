@@ -4,7 +4,7 @@ use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
 pub struct Args {
-    /// http/websocket signalling listen address
+    /// http/websocket signaling listen address
     #[structopt(long, default_value = "127.0.0.1:8080")]
     pub signal_server: SocketAddr,
 

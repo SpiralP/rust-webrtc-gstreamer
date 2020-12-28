@@ -27,7 +27,7 @@ const rtcConfiguration: RTCConfiguration = {
 const video = document.getElementById("video") as HTMLVideoElement;
 
 const peerConnection = new RTCPeerConnection(rtcConfiguration);
-const signallingConnection = new WebSocket(`ws://spiralp.uk.to:61234/`);
+const signalingConnection = new WebSocket(`ws://${location.host}/ws`);
 
 peerConnection.addEventListener("track", (event) => {
   console.log("track", event.streams);
@@ -55,14 +55,14 @@ peerConnection.addEventListener("icecandidate", async (event) => {
       sdpMLineIndex: candidate.sdpMLineIndex,
     },
   };
-  signallingConnection.send(JSON.stringify(msg));
+  signalingConnection.send(JSON.stringify(msg));
 });
 peerConnection.addEventListener("signalingstatechange", (event) => {
   console.log("signalingstatechange", peerConnection.signalingState);
 });
 
-signallingConnection.addEventListener("error", console.error);
-signallingConnection.addEventListener("message", async ({ data }) => {
+signalingConnection.addEventListener("error", console.error);
+signalingConnection.addEventListener("message", async ({ data }) => {
   const msg = JSON.parse(data) as JsonMsg;
 
   if (isJsonMsgSdp(msg)) {
@@ -83,7 +83,7 @@ signallingConnection.addEventListener("message", async ({ data }) => {
     const answerMsg: JsonMsgSdp = {
       sdp: peerConnection.localDescription.sdp,
     };
-    signallingConnection.send(JSON.stringify(answerMsg));
+    signalingConnection.send(JSON.stringify(answerMsg));
   } else if (isJsonMsgIce(msg)) {
     console.log("remote candidate", msg.ice.candidate);
     await peerConnection.addIceCandidate(msg.ice);

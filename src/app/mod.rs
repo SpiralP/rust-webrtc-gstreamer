@@ -1,26 +1,28 @@
-use crate::{types::JsonMsg, upgrade_weak, Args};
+mod types;
+
+pub use self::types::Args;
+use self::types::JsonMsg;
+use crate::{concat_spaces, upgrade_weak};
 use anyhow::*;
-use async_std::{
-    net::{TcpListener, TcpStream},
-    prelude::*,
-    task,
-};
-use async_tungstenite::{tungstenite, WebSocketStream};
 use futures::{
     channel::{mpsc, oneshot},
-    sink::{Sink, SinkExt},
+    future::FutureExt,
+    sink::SinkExt,
     stream::StreamExt,
-    AsyncRead, AsyncWrite,
 };
 use gst::{gst_element_error, message::MessageView, prelude::*, Element, ElementFactory, Pipeline};
 use gst_sdp::*;
 use gst_webrtc::*;
 use std::{
+    net::SocketAddr,
     ops,
     os::raw::c_int,
     sync::{Arc, Weak},
 };
-use tungstenite::{Error as WsError, Message as WsMessage};
+use tracing::*;
+use warp::{path::FullPath, ws, Filter};
+
+include!(concat!(env!("OUT_DIR"), "/parceljs.rs"));
 
 // Strong reference to our application state
 #[derive(Debug, Clone)]
@@ -55,24 +57,13 @@ impl ops::Deref for App {
     }
 }
 
-macro_rules! concat_spaces {
-    ($($e:expr),+) => { concat_spaces!($($e,)+) };
-    ($($e:expr,)+) => { concat!($($e, " ", )*) };
-}
-
-#[test]
-fn test_concat_spaces() {
-    assert_eq!(concat_spaces!("a", "b", "c"), "a b c ");
-    assert_eq!(concat_spaces!("a", "b"), "a b ");
-    assert_eq!(concat_spaces!("a"), "a ");
-}
-
 impl App {
     // Downgrade the strong reference to a weak reference
     fn downgrade(&self) -> AppWeak {
         AppWeak(Arc::downgrade(&self.0))
     }
 
+    #[tracing::instrument]
     pub fn new(args: Args) -> Result<Self> {
         let (pipeline, video_tee, audio_tee) = Self::setup(&args)?;
 
@@ -85,6 +76,7 @@ impl App {
     }
 
     /// returns (pipeline, video_tee, audio_tee)
+    #[tracing::instrument]
     fn setup(args: &Args) -> Result<(Pipeline, Element, Element)> {
         let pipeline = format!(
             concat_spaces!(
@@ -95,11 +87,11 @@ impl App {
                 // video
                 "demux. ! queue",
                 // decode h264
-                "  ! h264parse disable-passthrough=true",
-                "  ! avdec_h264 output-corrupt=true ! queue",
+                "  ! h264parse",
+                "  ! avdec_h264 ! queue",
                 // encode vp8 (rtp)
                 "  ! videoconvert ! videoscale ! videorate ! queue",
-                "  ! video/x-raw,width=10,height=10,framerate=1/1",
+                "  ! video/x-raw,width=1280,height=720,framerate=30/1",
                 "  ! vp8enc",
                 "    cpu-used={cpu_used}",
                 "    deadline=1",
@@ -150,22 +142,48 @@ impl App {
     // <- { sdp: "offer....." } // contains 1 candidate
     // -> { sdp: "answer....." }
 
+    #[tracing::instrument(fields(self))]
     pub async fn run(self) -> Result<()> {
-        let try_socket = TcpListener::bind(&self.args.signal_server).await;
-        let listener = try_socket.expect("Failed to bind");
-        println!("Signalling server on: {}", self.args.signal_server);
-
         let bus = self.pipeline.get_bus().unwrap();
         let mut pipeline_bus_stream = bus.stream().fuse();
 
-        let mut websocket_accept_stream = listener.incoming().fuse();
-
         self.pipeline.call_async(|pipeline| {
-            println!("Setting Pipeline to Playing");
+            debug!("Setting Pipeline to Playing");
             pipeline
                 .set_state(gst::State::Playing)
                 .expect("Couldn't set pipeline to Playing");
         });
+
+        info!(
+            "starting http/websocket server on http://{}/",
+            &self.args.signal_server
+        );
+
+        let weak_app = self.downgrade();
+        let routes = warp::path("ws")
+            .and(warp::addr::remote().and(warp::ws()).map(
+                move |addr: Option<SocketAddr>, ws: warp::ws::Ws| {
+                    let weak_app = weak_app.clone();
+
+                    ws.on_upgrade(move |websocket| async move {
+                        debug!("New WebSocket connection: {:?}", addr);
+
+                        tokio::spawn(async move {
+                            let app = upgrade_weak!(weak_app);
+
+                            app.on_new_client(websocket).await.unwrap();
+
+                            debug!("on_new_client done");
+                        });
+                    })
+                },
+            ))
+            .or(warp::path::full().map(|path: FullPath| {
+                debug!("http {}", path.as_str());
+                PARCELJS.as_reply(path)
+            }));
+
+        let mut warp_future = warp::serve(routes).bind(self.args.signal_server).fuse();
 
         loop {
             futures::select! {
@@ -181,37 +199,28 @@ impl App {
                         ),
 
                         MessageView::Warning(warning) => {
-                            println!("Warning: \"{}\"", warning.get_debug().unwrap());
+                            warn!("Warning: \"{}\"", warning.get_debug().unwrap());
                         }
 
                         _ => {}
                     }
                 },
 
-                // handle new websocket connections
-                tcp_stream = websocket_accept_stream.select_next_some() => {
-                    let tcp_stream = tcp_stream?;
-
-                    let addr = tcp_stream.peer_addr().unwrap();
-                    println!("New WebSocket connection: {}", addr);
-
-                    let weak_app = self.downgrade();
-                    task::spawn(async move {
-                        let app = upgrade_weak!(weak_app);
-
-                        app.on_new_client(tcp_stream)
-                            .await
-                            .unwrap();
-
-                        println!("on_new_client done");
-                    });
+                _ = warp_future => {
+                    break;
                 },
             };
         }
+
+        Ok(())
     }
 
-    async fn on_new_client(&self, tcp_stream: TcpStream) -> Result<()> {
-        let mut ws_stream = async_tungstenite::accept_async(tcp_stream).await?.fuse();
+    #[tracing::instrument(fields(self, websocket))]
+    async fn on_new_client(&self, websocket: warp::ws::WebSocket) -> Result<()> {
+        debug!("new client");
+
+        let (mut ws_sender, ws_receiver) = websocket.split();
+        let mut ws_receiver = ws_receiver.fuse();
 
         let peer_bin = gst::parse_bin_from_description(
             concat_spaces!(
@@ -290,14 +299,14 @@ impl App {
             webrtcbin.connect("on-negotiation-needed", false, move |values| {
                 let webrtcbin = values[0].get::<Element>().unwrap().unwrap();
 
-                println!("on-negotiation-needed");
+                debug!("on-negotiation-needed");
 
                 let promise = {
                     let webrtcbin = webrtcbin.clone();
                     let sender = sender.clone();
 
                     gst::Promise::with_change_func(move |reply| {
-                        println!("create-offer callback");
+                        debug!("create-offer callback");
 
                         let structure = reply.unwrap().unwrap();
                         let description = structure
@@ -336,7 +345,7 @@ impl App {
                 let sdp_m_line_index = values[1].get::<u32>().unwrap().unwrap();
                 let candidate = values[2].get::<String>().unwrap().unwrap();
 
-                // println!("on-ice-candidate: {} {}", sdp_m_line_index, candidate);
+                // debug!("on-ice-candidate: {} {}", sdp_m_line_index, candidate);
                 sender
                     .unbounded_send(JsonMsg::Ice {
                         sdp_m_line_index,
@@ -439,119 +448,105 @@ impl App {
         });
 
         // wait for offer to generate (local-description is set)
+        debug!("wait for offer");
         loop {
             futures::select! {
                 offer = offer_stream.select_next_some() => {
-                    println!("set-local-description");
+                    debug!("set-local-description");
 
-                    ws_stream
-                        .send(WsMessage::Text(serde_json::to_string(&offer)?))
+                    ws_sender
+                        .send(ws::Message::text(serde_json::to_string(&offer)?))
                         .await?;
 
                     break;
                 },
 
-                result = ws_stream.select_next_some() => {
+                result = ws_receiver.select_next_some() => {
                     let message = result?;
 
-                    match message {
-                        WsMessage::Close(_) => {
-                            println!("websocket closed");
-                            self.remove_peer(&peer_bin);
-                            break;
-                        }
-                        WsMessage::Ping(data) => {
-                            ws_stream.send(WsMessage::Pong(data)).await?;
-                        }
-
-                        _ => {}
+                    if message.is_close() {
+                        debug!("websocket closed");
+                        self.remove_peer(&peer_bin);
+                        break;
                     }
                 },
             };
         }
 
-        println!("loop");
+        debug!("loop");
         // now begin sending/receiving ice candidates
         loop {
             futures::select! {
                 offer = offer_stream.select_next_some() => {
-                    println!("set-local-description (re-negotiation)");
+                    debug!("set-local-description (re-negotiation)");
 
-                    ws_stream
-                        .send(WsMessage::Text(serde_json::to_string(&offer)?))
+                    ws_sender
+                        .send(ws::Message::text(serde_json::to_string(&offer)?))
                         .await?;
                 },
 
                 json_msg = ice_candidate_stream.select_next_some() => {
-                    ws_stream
-                        .send(WsMessage::Text(serde_json::to_string(&json_msg)?))
+                    ws_sender
+                        .send(ws::Message::text(serde_json::to_string(&json_msg)?))
                         .await?;
                 },
 
                 message = bus_stream.select_next_some() => {
                     if let MessageView::PropertyNotify(notify) = message.view() {
                         let structure = notify.get_structure().unwrap();
-                        println!("PropertyNotify {:#?}", structure);
+                        debug!("PropertyNotify {:#?}", structure);
                     }
                 },
 
 
-                result = ws_stream.select_next_some() => {
+                result = ws_receiver.select_next_some() => {
                     let message = result?;
 
-                    match message {
-                        WsMessage::Close(_) => {
-                            println!("websocket closed");
-                            self.remove_peer(&peer_bin);
-                            break;
-                        }
-                        WsMessage::Ping(data) => {
-                            ws_stream.send(WsMessage::Pong(data)).await?;
-                        }
-                        WsMessage::Pong(_) => {}
-                        WsMessage::Binary(_) => {}
-                        WsMessage::Text(text) => {
-                            let message = serde_json::from_str::<JsonMsg>(&text)?;
+                    if message.is_close() {
+                        debug!("websocket closed");
+                        self.remove_peer(&peer_bin);
+                        break;
+                    } else if let Ok(text) = message.to_str() {
+                        let message = serde_json::from_str::<JsonMsg>(&text)?;
 
-                            match message {
-                                JsonMsg::Sdp(sdp_answer) => {
-                                    let ret = SDPMessage::parse_buffer(sdp_answer.as_bytes())
-                                        .map_err(|_| anyhow!("Failed to parse SDP answer"))?;
-                                    let description = WebRTCSessionDescription::new(
-                                        WebRTCSDPType::Answer,
-                                        ret,
-                                    );
+                        match message {
+                            JsonMsg::Sdp(sdp_answer) => {
+                                let ret = SDPMessage::parse_buffer(sdp_answer.as_bytes())
+                                    .map_err(|_| anyhow!("Failed to parse SDP answer"))?;
+                                let description = WebRTCSessionDescription::new(
+                                    WebRTCSDPType::Answer,
+                                    ret,
+                                );
 
-                                    let (sender, receiver) = oneshot::channel();
-                                    let promise = gst::Promise::with_change_func(move |_reply| {
-                                        sender.send(()).unwrap();
-                                    });
+                                let (sender, receiver) = oneshot::channel();
+                                let promise = gst::Promise::with_change_func(move |_reply| {
+                                    sender.send(()).unwrap();
+                                });
 
-                                    println!("set-remote-description");
-                                    webrtcbin
-                                        .emit(
-                                            "set-remote-description",
-                                            &[&description, &promise],
-                                        )
-                                        .unwrap();
-
-                                    receiver.await.unwrap();
-                                }
-
-                                JsonMsg::Ice { sdp_m_line_index, candidate } => {
-                                    println!("add-ice-candidate");
-                                    println!("{}", candidate);
-
-                                    webrtcbin
+                                debug!("set-remote-description");
+                                webrtcbin
                                     .emit(
-                                        "add-ice-candidate",
-                                        &[&sdp_m_line_index, &candidate],
+                                        "set-remote-description",
+                                        &[&description, &promise],
                                     )
                                     .unwrap();
-                                }
+
+                                receiver.await.unwrap();
+                            }
+
+                            JsonMsg::Ice { sdp_m_line_index, candidate } => {
+                                debug!("add-ice-candidate");
+                                debug!("{}", candidate);
+
+                                webrtcbin
+                                .emit(
+                                    "add-ice-candidate",
+                                    &[&sdp_m_line_index, &candidate],
+                                )
+                                .unwrap();
                             }
                         }
-                    };
+                    }
                 },
             };
         }
@@ -597,15 +592,9 @@ impl App {
         let _ = self.pipeline.remove(peer_bin);
         let _ = peer_bin.set_state(gst::State::Null);
 
-        println!("Removed");
+        debug!("Removed");
     }
 }
-
-trait WebSocketConnection:
-    Sink<WsMessage, Error = WsError> + Stream<Item = Result<WsMessage, WsError>> + Unpin + Send
-{
-}
-impl<S> WebSocketConnection for WebSocketStream<S> where S: AsyncRead + AsyncWrite + Unpin + Send {}
 
 trait PipelineMake {
     fn make(&self, kind: &str) -> Result<Element>;

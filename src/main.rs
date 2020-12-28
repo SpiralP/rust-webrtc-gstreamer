@@ -1,9 +1,10 @@
 mod app;
+mod logger;
 mod macros;
-mod types;
 
-use crate::{app::App, types::Args};
+use self::app::{App, Args};
 use anyhow::*;
+use tracing::*;
 
 // Check if all GStreamer plugins we require are available
 fn check_plugins() -> Result<()> {
@@ -36,9 +37,13 @@ fn check_plugins() -> Result<()> {
     Ok(())
 }
 
-#[async_std::main]
 #[paw::main]
+#[tokio::main]
 async fn main(args: Args) -> Result<()> {
+    logger::initialize(true, false);
+
+    debug!("{:#?}", args);
+
     // Initialize GStreamer first
     gst::init()?;
     check_plugins()?;
