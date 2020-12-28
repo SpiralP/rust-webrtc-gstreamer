@@ -5,7 +5,7 @@ https://github.com/centricular/gstwebrtc-demos/blob/master/multiparty-sendrecv/g
 http://www.francescpinyol.cat/gstreamer.html
 
 ```
-export GST_DEBUG="webrtc*:9"
+export GST_DEBUG="*:2"
 
 to fix "a=fingerprint:sha-256 (null)"
 export OPENSSL_CONF=""
