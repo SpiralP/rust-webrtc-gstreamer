@@ -4,13 +4,15 @@ use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
 pub struct Args {
+    /// http/websocket signalling listen address
     #[structopt(long, default_value = "127.0.0.1:8080")]
-    pub signal_server: String,
+    pub signal_server: SocketAddr,
 
+    /// tcp mpegts input stream listen address
     #[structopt(long, default_value = "127.0.0.1:1935")]
     pub stream_server: SocketAddr,
 
-    #[structopt(long, default_value = "5")]
+    #[structopt(long, default_value = "8")]
     pub cpu_used: i8,
 
     #[structopt(long, default_value = "2000")]
@@ -22,6 +24,7 @@ pub struct Args {
 #[serde(rename_all = "camelCase")]
 pub enum JsonMsg {
     Sdp(String),
+
     #[serde(rename_all = "camelCase")]
     Ice {
         candidate: String,

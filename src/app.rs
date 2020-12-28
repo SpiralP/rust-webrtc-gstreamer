@@ -1,6 +1,4 @@
-// $env:GST_DEBUG = "webrtc*:9"
-
-use crate::{types::JsonMsg, Args};
+use crate::{types::JsonMsg, upgrade_weak, Args};
 use anyhow::*;
 use async_std::{
     net::{TcpListener, TcpStream},
@@ -10,58 +8,26 @@ use async_std::{
 use async_tungstenite::{tungstenite, WebSocketStream};
 use futures::{
     channel::{mpsc, oneshot},
-    future::FutureExt,
     sink::{Sink, SinkExt},
     stream::StreamExt,
     AsyncRead, AsyncWrite,
 };
-use gstreamer::{
-    gst_element_error, message::MessageView, prelude::*, Caps, Element, ElementFactory,
-    PadProbeReturn, PadProbeType, Pipeline, State,
-};
-use gstreamer_sdp::*;
-use gstreamer_webrtc::*;
+use gst::{gst_element_error, message::MessageView, prelude::*, Element, ElementFactory, Pipeline};
+use gst_sdp::*;
+use gst_webrtc::*;
 use std::{
-    net::ToSocketAddrs,
-    sync::{Arc, Mutex, Weak},
+    ops,
+    os::raw::c_int,
+    sync::{Arc, Weak},
 };
 use tungstenite::{Error as WsError, Message as WsMessage};
 
-// upgrade weak reference or return
-#[macro_export]
-macro_rules! upgrade_weak {
-    ($x:ident, $r:expr) => {{
-        match $x.upgrade() {
-            Some(o) => o,
-            None => return $r,
-        }
-    }};
-    ($x:ident) => {
-        upgrade_weak!($x, ())
-    };
-}
-
-// Actual application state
-pub struct AppInner {
-    args: Args,
-    pipeline: Pipeline,
-    video_tee: Element,
-    audio_tee: Element,
-
-    // (webrtcbin, websocket stream)
-    clients: Vec<(Element, Box<dyn WebSocketConnection>)>,
-}
-
-// Make sure to shut down the pipeline when it goes out of scope
-// to release any system resources
-impl Drop for AppInner {
-    fn drop(&mut self) {
-        let _ = self.pipeline.set_state(State::Null);
-    }
-}
+// Strong reference to our application state
+#[derive(Debug, Clone)]
+pub struct App(Arc<AppInner>);
 
 // Weak reference to our application state
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct AppWeak(Weak<AppInner>);
 
 impl AppWeak {
@@ -71,12 +37,17 @@ impl AppWeak {
     }
 }
 
-// Strong reference to our application state
-#[derive(Clone)]
-pub struct App(Arc<AppInner>);
+// Actual application state
+#[derive(Debug)]
+pub struct AppInner {
+    args: Args,
+    pipeline: Pipeline,
+    video_tee: Element,
+    audio_tee: Element,
+}
 
 // To be able to access the App's fields directly
-impl std::ops::Deref for App {
+impl ops::Deref for App {
     type Target = AppInner;
 
     fn deref(&self) -> &AppInner {
@@ -84,21 +55,16 @@ impl std::ops::Deref for App {
     }
 }
 
-fn link(elements: &[&Element], last: Element) -> Result<Element> {
-    let mut prev: Option<&Element> = None;
+macro_rules! concat_spaces {
+    ($($e:expr),+) => { concat_spaces!($($e,)+) };
+    ($($e:expr,)+) => { concat!($($e, " ", )*) };
+}
 
-    for &e in elements {
-        if let Some(prev) = prev {
-            prev.link(e)?;
-        }
-        prev = Some(e);
-    }
-
-    if let Some(prev) = prev {
-        prev.link(&last)?;
-    }
-
-    Ok(last)
+#[test]
+fn test_concat_spaces() {
+    assert_eq!(concat_spaces!("a", "b", "c"), "a b c ");
+    assert_eq!(concat_spaces!("a", "b"), "a b ");
+    assert_eq!(concat_spaces!("a"), "a ");
 }
 
 impl App {
@@ -106,8 +72,6 @@ impl App {
     fn downgrade(&self) -> AppWeak {
         AppWeak(Arc::downgrade(&self.0))
     }
-
-    // webrtcbin bundle-policy=max-bundle name=sendrecv stun-server=stun://stun.l.google.com:19302 \
 
     pub fn new(args: Args) -> Result<Self> {
         let (pipeline, video_tee, audio_tee) = Self::setup(&args)?;
@@ -117,49 +81,55 @@ impl App {
             pipeline,
             video_tee,
             audio_tee,
-            clients: Default::default(),
         })))
     }
 
     /// returns (pipeline, video_tee, audio_tee)
     fn setup(args: &Args) -> Result<(Pipeline, Element, Element)> {
         let pipeline = format!(
-            concat!(
-                "tcpserversrc host={ip} port={port} ! ",
-                "tsparse ! tsdemux name=demux ",
+            concat_spaces!(
+                "tcpserversrc host={ip} port={port} ! queue",
+                "  ! tsparse",
+                "  ! tsdemux name=demux",
                 ////////////////
                 // video
-                "demux. ! queue ! ",
+                "demux. ! queue",
                 // decode h264
-                "h264parse ! avdec_h264 ! ",
+                "  ! h264parse disable-passthrough=true",
+                "  ! avdec_h264 output-corrupt=true ! queue",
                 // encode vp8 (rtp)
-                "videoconvert ! videoscale ! videorate ! ",
-                "video/x-raw,width=1280,height=720,framerate=30/1 ! ",
-                //
-                "vp8enc ",
-                "cpu-used={cpu_used} ",
-                "deadline=1 ",
-                "threads={threads} ",
-                "static-threshold=0 ",
-                "max-intra-bitrate=300 ",
-                "lag-in-frames=0 ",
-                "min-quantizer=4 ",
-                "max-quantizer=48 ",
-                "error-resilient=1 ",
-                "target-bitrate={video_bitrate} ",
-                //
-                " ! video/x-vp8 ! ",
-                "rtpvp8pay pt=96 ! ",
-                "tee name=video-tee ! queue ! fakesink sync=true ",
+                "  ! videoconvert ! videoscale ! videorate ! queue",
+                "  ! video/x-raw,width=10,height=10,framerate=1/1",
+                "  ! vp8enc",
+                "    cpu-used={cpu_used}",
+                "    deadline=1",
+                "    threads={threads}",
+                "    static-threshold=0",
+                "    max-intra-bitrate=300",
+                "    lag-in-frames=0",
+                "    min-quantizer=4",
+                "    max-quantizer=48",
+                "    error-resilient=1",
+                "    target-bitrate={video_bitrate}",
+                "  ! video/x-vp8 ! queue",
+                "  ! rtpvp8pay pt=96 ! queue",
+                "  ! tee name=video-tee ! queue",
+                "  ! fakesink",
                 ////////////////
                 // audio
-                "demux. ! queue ! ",
+                "demux. ! queue",
                 // decode aac
-                "aacparse ! avdec_aac ! ",
+                "  ! aacparse",
+                "  ! avdec_aac ! queue",
                 // encode opus (rtp)
-                "audioconvert ! audioresample ! ",
-                "opusenc ! rtpopuspay pt=97 ! ",
-                "tee name=audio-tee ! queue ! fakesink sync=true ",
+                "  ! audioconvert ! audioresample ! queue",
+                "  ! audio/x-raw,channels=2,rate=48000",
+                "  ! opusenc",
+                "    bitrate=128000",
+                "  ! audio/x-opus ! queue",
+                "  ! rtpopuspay pt=97 ! queue",
+                "  ! tee name=audio-tee ! queue",
+                "  ! fakesink",
             ),
             ip = args.stream_server.ip(),
             port = args.stream_server.port(),
@@ -167,7 +137,7 @@ impl App {
             cpu_used = args.cpu_used,
             video_bitrate = args.video_bitrate
         );
-        let pipeline = gstreamer::parse_launch(&pipeline)?;
+        let pipeline = gst::parse_launch(&pipeline)?;
         let pipeline = pipeline.downcast::<Pipeline>().expect("not a pipeline");
 
         let video_tee = pipeline.get_by_name("video-tee").unwrap();
@@ -193,7 +163,7 @@ impl App {
         self.pipeline.call_async(|pipeline| {
             println!("Setting Pipeline to Playing");
             pipeline
-                .set_state(gstreamer::State::Playing)
+                .set_state(gst::State::Playing)
                 .expect("Couldn't set pipeline to Playing");
         });
 
@@ -225,39 +195,33 @@ impl App {
                     let addr = tcp_stream.peer_addr().unwrap();
                     println!("New WebSocket connection: {}", addr);
 
-                    let pipeline = self.pipeline.clone();
-                    let video_tee = self.video_tee.clone();
-                    let audio_tee = self.audio_tee.clone();
-
+                    let weak_app = self.downgrade();
                     task::spawn(async move {
-                        Self::on_new_client(pipeline, video_tee, audio_tee, tcp_stream)
+                        let app = upgrade_weak!(weak_app);
+
+                        app.on_new_client(tcp_stream)
                             .await
                             .unwrap();
 
-                        println!("done");
+                        println!("on_new_client done");
                     });
                 },
             };
         }
-
-        println!("select finished!");
-
-        Ok(())
     }
 
-    async fn on_new_client(
-        pipeline: Pipeline,
-        video_tee: Element,
-        audio_tee: Element,
-        tcp_stream: TcpStream,
-    ) -> Result<()> {
+    async fn on_new_client(&self, tcp_stream: TcpStream) -> Result<()> {
         let mut ws_stream = async_tungstenite::accept_async(tcp_stream).await?.fuse();
 
-        let peer_bin = gstreamer::parse_bin_from_description(
-            concat!(
-                "queue name=video-queue ! webrtcbin. ",
-                "queue name=audio-queue ! webrtcbin. ",
-                "webrtcbin name=webrtcbin"
+        let peer_bin = gst::parse_bin_from_description(
+            concat_spaces!(
+                "queue name=video-queue",
+                "  ! rtpjitterbuffer mode=0",
+                "  ! webrtcbin.",
+                "queue name=audio-queue",
+                "  ! rtpjitterbuffer mode=0",
+                "  ! webrtcbin.",
+                "webrtcbin latency=0 name=webrtcbin"
             ),
             false,
         )?;
@@ -269,27 +233,21 @@ impl App {
         // Set some properties on webrtcbin
         webrtcbin.set_property_from_str("stun-server", "stun://stun.l.google.com:19302");
         webrtcbin.set_property_from_str("bundle-policy", "max-bundle");
-        let ice_agent = webrtcbin
-            .get_property("ice-agent")
-            .unwrap()
-            .get::<gstreamer::Object>()
-            .expect("downcast")
-            .expect("option");
+        // let ice_agent = webrtcbin
+        //     .get_property("ice-agent")
+        //     .unwrap()
+        //     .get::<gst::Object>()
+        //     .expect("downcast")
+        //     .expect("option");
 
+        // // add local ip so that accessing the stream on the
+        // // same machine works in chrome
         // assert_eq!(
         //     ice_agent
-        //         .emit("add-local-ip-address", &[&"68.107.26.30"],)
-        //         .unwrap()
-        //         .unwrap()
-        //         .get::<bool>()
-        //         .unwrap()
-        //         .unwrap(),
-        //     true
-        // );
-
-        // assert_eq!(
-        //     ice_agent
-        //         .emit("add-local-ip-address", &[&"10.0.0.2"],)
+        //         .emit(
+        //             "add-local-ip-address",
+        //             &[&format!("{}", self.args.signal_server.ip())],
+        //         )
         //         .unwrap()
         //         .unwrap()
         //         .get::<bool>()
@@ -309,6 +267,17 @@ impl App {
         //     true
         // );
 
+        // assert_eq!(
+        //     ice_agent
+        //         .emit("add-local-ip-address", &[&"68.107.26.30"],)
+        //         .unwrap()
+        //         .unwrap()
+        //         .get::<bool>()
+        //         .unwrap()
+        //         .unwrap(),
+        //     true
+        // );
+
         webrtcbin.add_property_notify_watch(None, true);
 
         let bus = webrtcbin.get_bus().unwrap();
@@ -317,7 +286,7 @@ impl App {
         let mut offer_stream = {
             let (sender, receiver) = mpsc::unbounded();
 
-            // Connect to on-negotiation-needed to handle sending an Offer
+            // on-negotiation-needed -> create-offer -> set-local-description
             webrtcbin.connect("on-negotiation-needed", false, move |values| {
                 let webrtcbin = values[0].get::<Element>().unwrap().unwrap();
 
@@ -327,7 +296,7 @@ impl App {
                     let webrtcbin = webrtcbin.clone();
                     let sender = sender.clone();
 
-                    gstreamer::Promise::with_change_func(move |reply| {
+                    gst::Promise::with_change_func(move |reply| {
                         println!("create-offer callback");
 
                         let structure = reply.unwrap().unwrap();
@@ -338,7 +307,7 @@ impl App {
 
                         let sdp_text = description.get_sdp().as_text().unwrap();
 
-                        let promise = gstreamer::Promise::with_change_func(move |_| {
+                        let promise = gst::Promise::with_change_func(move |_| {
                             sender.unbounded_send(JsonMsg::Sdp(sdp_text)).unwrap();
                         });
 
@@ -348,12 +317,9 @@ impl App {
                     })
                 };
 
-                println!(
-                    "create-offer {:#?}",
-                    webrtcbin
-                        .emit("create-offer", &[&None::<gstreamer::Structure>, &promise])
-                        .unwrap()
-                );
+                webrtcbin
+                    .emit("create-offer", &[&None::<gst::Structure>, &promise])
+                    .unwrap();
 
                 None
             })?;
@@ -365,9 +331,8 @@ impl App {
         let mut ice_candidate_stream = {
             let (sender, receiver) = mpsc::unbounded();
 
-            // Connect to on-negotiation-needed to handle sending an Offer
             webrtcbin.connect("on-ice-candidate", false, move |values| {
-                let _webrtcbin = values[0].get::<gstreamer::Element>().unwrap().unwrap();
+                let _webrtcbin = values[0].get::<gst::Element>().unwrap().unwrap();
                 let sdp_m_line_index = values[1].get::<u32>().unwrap().unwrap();
                 let candidate = values[2].get::<String>().unwrap().unwrap();
 
@@ -390,7 +355,7 @@ impl App {
         let audio_queue = peer_bin
             .get_by_name("audio-queue")
             .expect("can't find audio-queue");
-        let audio_sink_pad = gstreamer::GhostPad::with_target(
+        let audio_sink_pad = gst::GhostPad::with_target(
             Some("audio_sink"),
             &audio_queue.get_static_pad("sink").unwrap(),
         )
@@ -400,23 +365,26 @@ impl App {
         let video_queue = peer_bin
             .get_by_name("video-queue")
             .expect("can't find video-queue");
-        let video_sink_pad = gstreamer::GhostPad::with_target(
+        let video_sink_pad = gst::GhostPad::with_target(
             Some("video_sink"),
             &video_queue.get_static_pad("sink").unwrap(),
         )
         .unwrap();
         peer_bin.add_pad(&video_sink_pad).unwrap();
 
-        pipeline.add(&peer_bin).unwrap();
+        self.pipeline.add(&peer_bin).unwrap();
 
-        // {
-        //     let transceiver = webrtcbin
-        //         .emit("get-transceiver", &[&0i32])
-        //         .unwrap()
-        //         .unwrap();
-        //     let transceiver = transceiver.get::<WebRTCRTPTransceiver>().unwrap().unwrap();
-        //     transceiver.set_property_direction(WebRTCRTPTransceiverDirection::Sendonly);
-        // }
+        for i in 0.. {
+            let transceiver = webrtcbin
+                .emit("get-transceiver", &[&(i as c_int)])
+                .unwrap()
+                .unwrap();
+            if let Some(transceiver) = transceiver.get::<WebRTCRTPTransceiver>().unwrap() {
+                transceiver.set_property_direction(WebRTCRTPTransceiverDirection::Sendonly);
+            } else {
+                break;
+            }
+        }
 
         ////////////////////////////////////////////////////////////////
 
@@ -428,110 +396,102 @@ impl App {
         //
         // Otherwise it might happen that data is received before
         // the elements are ready and then an error happens.
-        let audio_src_pad = audio_tee.get_request_pad("src_%u").unwrap();
+        let audio_src_pad = self.audio_tee.get_request_pad("src_%u").unwrap();
         let audio_block = audio_src_pad
-            .add_probe(gstreamer::PadProbeType::BLOCK_DOWNSTREAM, |_pad, _info| {
-                gstreamer::PadProbeReturn::Ok
+            .add_probe(gst::PadProbeType::BLOCK_DOWNSTREAM, |_pad, _info| {
+                gst::PadProbeReturn::Ok
             })
             .unwrap();
         audio_src_pad.link(&audio_sink_pad)?;
 
-        let video_src_pad = video_tee.get_request_pad("src_%u").unwrap();
+        let video_src_pad = self.video_tee.get_request_pad("src_%u").unwrap();
         let video_block = video_src_pad
-            .add_probe(gstreamer::PadProbeType::BLOCK_DOWNSTREAM, |_pad, _info| {
-                gstreamer::PadProbeReturn::Ok
+            .add_probe(gst::PadProbeType::BLOCK_DOWNSTREAM, |_pad, _info| {
+                gst::PadProbeReturn::Ok
             })
             .unwrap();
         video_src_pad.link(&video_sink_pad)?;
 
-        peer_bin.connect_pad_added(move |_bin, pad| {
-            println!("!!!!!!!!!!!! {}", pad.get_name());
-        });
-
-        // Asynchronously set the peer bin to Playing
         peer_bin.call_async(move |bin| {
             // If this fails, post an error on the bus so we exit
             if bin.sync_state_with_parent().is_err() {
                 gst_element_error!(
                     bin,
-                    gstreamer::LibraryError::Failed,
+                    gst::LibraryError::Failed,
                     ("Failed to set peer bin to Playing")
                 );
             }
 
             // And now unblock
-            println!("unblocking");
             audio_src_pad.remove_probe(audio_block);
             video_src_pad.remove_probe(video_block);
         });
 
-        // Asynchronously set the pipeline to Playing
-        pipeline.call_async(|pipeline| {
+        self.pipeline.call_async(|pipeline| {
             // If this fails, post an error on the bus so we exit
-            if pipeline.set_state(gstreamer::State::Playing).is_err() {
+            if pipeline.set_state(gst::State::Playing).is_err() {
                 gst_element_error!(
                     pipeline,
-                    gstreamer::LibraryError::Failed,
+                    gst::LibraryError::Failed,
                     ("Failed to set pipeline to Playing")
                 );
             }
         });
 
-        if let Some(message) = offer_stream.next().await {
-            println!("set-local-description");
-        }
-
-        println!("loop");
+        // wait for offer to generate (local-description is set)
         loop {
             futures::select! {
-                message = offer_stream.select_next_some() => {
-                    todo!("more than 1 offer/negotiation?");
+                offer = offer_stream.select_next_some() => {
+                    println!("set-local-description");
+
+                    ws_stream
+                        .send(WsMessage::Text(serde_json::to_string(&offer)?))
+                        .await?;
+
+                    break;
                 },
 
-                json_msg = ice_candidate_stream.select_next_some() => {
-                    // println!("send candidate: {:?}", json_msg);
+                result = ws_stream.select_next_some() => {
+                    let message = result?;
 
-                    // ws_stream
-                    //     .send(WsMessage::Text(serde_json::to_string(&json_msg)?))
-                    //     .await?;
-                },
-
-                message = bus_stream.select_next_some() => {
-                    match message.view() {
-                        MessageView::PropertyNotify(notify) => {
-                            println!("PropertyNotify");
-                            let structure = notify.get_structure().unwrap();
-                            let property_name = structure.get::<String>("property-name").unwrap().unwrap();
-                            // GstMessagePropertyNotify, property-name=(string)ice-gathering-state, property-value=(GstWebRTCICEGatheringState)complete;
-                            if property_name == "ice-gathering-state" {
-                                let property_value = structure.get::<WebRTCICEGatheringState>("property-value").unwrap().unwrap();
-                                println!("!!!!! {:#?}", structure);
-                                if property_value == WebRTCICEGatheringState::Complete {
-                                    println!("finished gathering ice candidates!");
-
-                                    let description = webrtcbin
-                                        .get_property("pending-local-description")
-                                        .unwrap()
-                                        .get::<WebRTCSessionDescription>()
-                                        .unwrap().unwrap();
-
-                                    let offer = description.get_sdp().as_text().unwrap();
-
-                                    println!("send offer:");
-                                    println!("{}", offer);
-
-                                    ws_stream
-                                        .send(WsMessage::Text(serde_json::to_string(&JsonMsg::Sdp(
-                                            offer,
-                                        ))?))
-                                        .await?;
-                                }
-                            } else {
-                                println!("{:#?}", structure);
-                            }
+                    match message {
+                        WsMessage::Close(_) => {
+                            println!("websocket closed");
+                            self.remove_peer(&peer_bin);
+                            break;
+                        }
+                        WsMessage::Ping(data) => {
+                            ws_stream.send(WsMessage::Pong(data)).await?;
                         }
 
                         _ => {}
+                    }
+                },
+            };
+        }
+
+        println!("loop");
+        // now begin sending/receiving ice candidates
+        loop {
+            futures::select! {
+                offer = offer_stream.select_next_some() => {
+                    println!("set-local-description (re-negotiation)");
+
+                    ws_stream
+                        .send(WsMessage::Text(serde_json::to_string(&offer)?))
+                        .await?;
+                },
+
+                json_msg = ice_candidate_stream.select_next_some() => {
+                    ws_stream
+                        .send(WsMessage::Text(serde_json::to_string(&json_msg)?))
+                        .await?;
+                },
+
+                message = bus_stream.select_next_some() => {
+                    if let MessageView::PropertyNotify(notify) = message.view() {
+                        let structure = notify.get_structure().unwrap();
+                        println!("PropertyNotify {:#?}", structure);
                     }
                 },
 
@@ -541,46 +501,8 @@ impl App {
 
                     match message {
                         WsMessage::Close(_) => {
-                            println!("peer disconnected");
-
-                            // Block the tees shortly for removal
-                            let audio_tee_sinkpad = audio_tee.get_static_pad("sink").unwrap();
-                            let audio_block = audio_tee_sinkpad
-                                .add_probe(gstreamer::PadProbeType::BLOCK_DOWNSTREAM, |_pad, _info| {
-                                    gstreamer::PadProbeReturn::Ok
-                                })
-                                .unwrap();
-
-                            let video_tee_sinkpad = video_tee.get_static_pad("sink").unwrap();
-                            let video_block = video_tee_sinkpad
-                                .add_probe(gstreamer::PadProbeType::BLOCK_DOWNSTREAM, |_pad, _info| {
-                                    gstreamer::PadProbeReturn::Ok
-                                })
-                                .unwrap();
-
-                            // Release the tee pads and unblock
-                            let audio_sinkpad = peer_bin.get_static_pad("audio_sink").unwrap();
-                            let video_sinkpad = peer_bin.get_static_pad("video_sink").unwrap();
-
-                            if let Some(audio_tee_srcpad) = audio_sinkpad.get_peer() {
-                                let _ = audio_tee_srcpad.unlink(&audio_sinkpad);
-                                audio_tee.release_request_pad(&audio_tee_srcpad);
-                            }
-                            audio_tee_sinkpad.remove_probe(audio_block);
-
-                            if let Some(video_tee_srcpad) = video_sinkpad.get_peer() {
-                                let _ = video_tee_srcpad.unlink(&video_sinkpad);
-                                video_tee.release_request_pad(&video_tee_srcpad);
-                            }
-                            video_tee_sinkpad.remove_probe(video_block);
-
-                            // Then remove the peer bin gracefully from the pipeline
-                            let _ = pipeline.remove(&peer_bin);
-                            let _ = peer_bin.set_state(gstreamer::State::Null);
-
-
-
-                            println!("Removed");
+                            println!("websocket closed");
+                            self.remove_peer(&peer_bin);
                             break;
                         }
                         WsMessage::Ping(data) => {
@@ -601,7 +523,7 @@ impl App {
                                     );
 
                                     let (sender, receiver) = oneshot::channel();
-                                    let promise = gstreamer::Promise::with_change_func(move |reply| {
+                                    let promise = gst::Promise::with_change_func(move |_reply| {
                                         sender.send(()).unwrap();
                                     });
 
@@ -617,17 +539,15 @@ impl App {
                                 }
 
                                 JsonMsg::Ice { sdp_m_line_index, candidate } => {
-                                    if candidate != "" {
-                                        println!("add-ice-candidate");
-                                        println!("{}", candidate);
+                                    println!("add-ice-candidate");
+                                    println!("{}", candidate);
 
-                                        webrtcbin
-                                        .emit(
-                                            "add-ice-candidate",
-                                            &[&sdp_m_line_index, &candidate],
-                                        )
-                                        .unwrap();
-                                    }
+                                    webrtcbin
+                                    .emit(
+                                        "add-ice-candidate",
+                                        &[&sdp_m_line_index, &candidate],
+                                    )
+                                    .unwrap();
                                 }
                             }
                         }
@@ -637,6 +557,47 @@ impl App {
         }
 
         Ok(())
+    }
+
+    fn remove_peer(&self, peer_bin: &gst::Bin) {
+        // Block the tees shortly for removal
+        let audio_tee_sinkpad = self.audio_tee.get_static_pad("sink").unwrap();
+        let audio_block = audio_tee_sinkpad
+            .add_probe(gst::PadProbeType::BLOCK_DOWNSTREAM, |_pad, _info| {
+                gst::PadProbeReturn::Ok
+            })
+            .unwrap();
+
+        let video_tee_sinkpad = self.video_tee.get_static_pad("sink").unwrap();
+        let video_block = video_tee_sinkpad
+            .add_probe(gst::PadProbeType::BLOCK_DOWNSTREAM, |_pad, _info| {
+                gst::PadProbeReturn::Ok
+            })
+            .unwrap();
+
+        // Release the tee pads and unblock
+
+        if let Some(audio_sinkpad) = peer_bin.get_static_pad("audio_sink") {
+            if let Some(audio_tee_srcpad) = audio_sinkpad.get_peer() {
+                let _ = audio_tee_srcpad.unlink(&audio_sinkpad);
+                self.audio_tee.release_request_pad(&audio_tee_srcpad);
+            }
+            audio_tee_sinkpad.remove_probe(audio_block);
+        }
+
+        if let Some(video_sinkpad) = peer_bin.get_static_pad("video_sink") {
+            if let Some(video_tee_srcpad) = video_sinkpad.get_peer() {
+                let _ = video_tee_srcpad.unlink(&video_sinkpad);
+                self.video_tee.release_request_pad(&video_tee_srcpad);
+            }
+        }
+        video_tee_sinkpad.remove_probe(video_block);
+
+        // Then remove the peer bin gracefully from the pipeline
+        let _ = self.pipeline.remove(peer_bin);
+        let _ = peer_bin.set_state(gst::State::Null);
+
+        println!("Removed");
     }
 }
 
