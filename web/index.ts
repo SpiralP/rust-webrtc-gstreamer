@@ -27,6 +27,8 @@ const rtcConfiguration: RTCConfiguration = {
 const video = document.getElementById("video") as HTMLVideoElement;
 
 const peerConnection = new RTCPeerConnection(rtcConfiguration);
+// @ts-ignore
+global.peerConnection = peerConnection;
 const signalingConnection = new WebSocket(`ws://${location.host}/ws`);
 
 peerConnection.addEventListener("track", (event) => {
@@ -40,7 +42,6 @@ peerConnection.addEventListener("icecandidate", async (event) => {
     console.log("ICE Candidate was null, done");
     return;
   }
-  console.log("local candidate", candidate);
 
   if (
     candidate.candidate === "" ||
@@ -48,6 +49,7 @@ peerConnection.addEventListener("icecandidate", async (event) => {
   ) {
     return;
   }
+  console.log("local candidate", candidate);
 
   const msg: JsonMsgIce = {
     ice: {
@@ -72,10 +74,7 @@ signalingConnection.addEventListener("message", async ({ data }) => {
       type: "offer",
     });
 
-    const answer = await peerConnection.createAnswer({
-      offerToReceiveAudio: true,
-      offerToReceiveVideo: true,
-    });
+    const answer = await peerConnection.createAnswer();
 
     console.log("setLocalDescription", answer.sdp);
     await peerConnection.setLocalDescription(answer);
