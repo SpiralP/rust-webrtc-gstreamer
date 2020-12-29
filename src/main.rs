@@ -9,22 +9,22 @@ use tracing::*;
 // Check if all GStreamer plugins we require are available
 fn check_plugins() -> Result<()> {
     let needed = [
-        "videotestsrc",
-        "audiotestsrc",
-        "videoconvert",
-        "audioconvert",
-        "autodetect",
-        "opus",
-        "vpx",
+        "coreelements",
         "webrtc",
-        "nice",
-        "dtls",
-        "srtp",
         "rtpmanager",
-        "rtp",
-        "playback",
+        "tcp",
+        "mpegtsdemux",
+        "videoparsersbad",
+        "libav",
+        "videoconvert",
         "videoscale",
+        "videorate",
+        "vpx",
+        "rtp",
+        "audioparsers",
+        "audioconvert",
         "audioresample",
+        "opus",
     ];
 
     let registry = gst::Registry::get();
