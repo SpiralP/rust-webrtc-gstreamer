@@ -15,8 +15,9 @@ pub struct Args {
     #[structopt(long, default_value = "8")]
     pub cpu_used: i8,
 
-    #[structopt(long, default_value = "2000")]
-    pub video_bitrate: u16,
+    /// Target bitrate (in bits/sec)
+    #[structopt(long, default_value = "2000000")]
+    pub video_bitrate: u32,
 }
 
 // JSON messages we communicate with

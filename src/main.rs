@@ -4,6 +4,7 @@ mod macros;
 
 use self::app::{App, Args};
 use anyhow::*;
+use std::env;
 use tracing::*;
 
 // Check if all GStreamer plugins we require are available
@@ -41,6 +42,11 @@ fn check_plugins() -> Result<()> {
 #[tokio::main]
 async fn main(args: Args) -> Result<()> {
     logger::initialize(true, false);
+
+    if env::var("GST_DEBUG").is_err() {
+        // show warnings
+        env::set_var("GST_DEBUG", "*:2");
+    }
 
     debug!("{:#?}", args);
 

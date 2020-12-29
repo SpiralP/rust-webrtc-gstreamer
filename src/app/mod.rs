@@ -89,10 +89,10 @@ impl App {
                 // decode h264
                 "  ! h264parse",
                 "  ! avdec_h264 ! queue",
-                // encode vp8 (rtp)
+                // encode vp9 (rtp)
                 "  ! videoconvert ! videoscale ! videorate ! queue",
                 "  ! video/x-raw,width=1280,height=720,framerate=30/1",
-                "  ! vp8enc",
+                "  ! vp9enc",
                 "    cpu-used={cpu_used}",
                 "    deadline=1",
                 "    threads={threads}",
@@ -103,10 +103,9 @@ impl App {
                 "    max-quantizer=48",
                 "    error-resilient=1",
                 "    target-bitrate={video_bitrate}",
-                "  ! video/x-vp8 ! queue",
-                "  ! rtpvp8pay pt=96 ! queue",
-                "  ! tee name=video-tee ! queue",
-                "  ! fakesink",
+                "  ! video/x-vp9 ! queue",
+                "  ! rtpvp9pay pt=96 ! queue",
+                "  ! tee name=video-tee allow-not-linked=true",
                 ////////////////
                 // audio
                 "demux. ! queue",
@@ -120,8 +119,7 @@ impl App {
                 "    bitrate=128000",
                 "  ! audio/x-opus ! queue",
                 "  ! rtpopuspay pt=97 ! queue",
-                "  ! tee name=audio-tee ! queue",
-                "  ! fakesink",
+                "  ! tee name=audio-tee allow-not-linked=true",
             ),
             ip = args.stream_server.ip(),
             port = args.stream_server.port(),
@@ -188,22 +186,7 @@ impl App {
         loop {
             futures::select! {
                 message = pipeline_bus_stream.select_next_some() => {
-                    match message.view() {
-                        MessageView::Error(err) => bail!(
-                            "Error from element {}: {} ({})",
-                            err.get_src()
-                                .map(|s| String::from(s.get_path_string()))
-                                .unwrap_or_else(|| String::from("None")),
-                            err.get_error(),
-                            err.get_debug().unwrap_or_else(|| String::from("None")),
-                        ),
-
-                        MessageView::Warning(warning) => {
-                            warn!("Warning: \"{}\"", warning.get_debug().unwrap());
-                        }
-
-                        _ => {}
-                    }
+                    Self::handle_pipeline_message(message)?;
                 },
 
                 _ = warp_future => {
@@ -230,7 +213,7 @@ impl App {
                 "queue name=audio-queue",
                 "  ! rtpjitterbuffer mode=0",
                 "  ! webrtcbin.",
-                "webrtcbin latency=0 name=webrtcbin"
+                "webrtcbin name=webrtcbin"
             ),
             false,
         )?;
@@ -496,6 +479,8 @@ impl App {
                         let structure = notify.get_structure().unwrap();
                         debug!("PropertyNotify {:#?}", structure);
                     }
+
+                    Self::handle_pipeline_message(message)?;
                 },
 
 
@@ -593,6 +578,29 @@ impl App {
         let _ = peer_bin.set_state(gst::State::Null);
 
         debug!("Removed");
+    }
+
+    fn handle_pipeline_message(message: gst::Message) -> Result<()> {
+        match message.view() {
+            MessageView::Error(err) => {
+                bail!(
+                    "Error from element {}: {} ({})",
+                    err.get_src()
+                        .map(|s| String::from(s.get_path_string()))
+                        .unwrap_or_else(|| String::from("None")),
+                    err.get_error(),
+                    err.get_debug().unwrap_or_else(|| String::from("None")),
+                );
+            }
+
+            MessageView::Warning(warning) => {
+                warn!("Warning: \"{}\"", warning.get_debug().unwrap());
+            }
+
+            _ => {}
+        }
+
+        Ok(())
     }
 }
 
