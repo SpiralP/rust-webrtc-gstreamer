@@ -20,7 +20,7 @@ function isJsonMsgIce(msg: JsonMsg): msg is JsonMsgIce {
 }
 
 const rtcConfiguration: RTCConfiguration = {
-  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+  iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
   bundlePolicy: "max-bundle",
 };
 
@@ -45,11 +45,12 @@ peerConnection.addEventListener("icecandidate", async (event) => {
 
   if (
     candidate.candidate === "" ||
+    // server won't know what to do with these
     candidate.candidate.indexOf(".local") !== -1
   ) {
     return;
   }
-  console.log("local candidate", candidate);
+  console.log("local candidate", candidate.candidate);
 
   const msg: JsonMsgIce = {
     ice: {
@@ -59,8 +60,18 @@ peerConnection.addEventListener("icecandidate", async (event) => {
   };
   signalingConnection.send(JSON.stringify(msg));
 });
-peerConnection.addEventListener("signalingstatechange", (event) => {
-  console.log("signalingstatechange", peerConnection.signalingState);
+peerConnection.addEventListener("connectionstatechange", () => {
+  console.log("connectionState", peerConnection.connectionState);
+});
+peerConnection.addEventListener("iceconnectionstatechange", () => {
+  console.log("iceConnectionState", peerConnection.iceConnectionState);
+});
+peerConnection.addEventListener("signalingstatechange", () => {
+  console.log("signalingState", peerConnection.signalingState);
+});
+
+peerConnection.addEventListener("negotiationneeded", () => {
+  console.warn("negotiationneeded");
 });
 
 signalingConnection.addEventListener("error", console.error);
@@ -68,6 +79,10 @@ signalingConnection.addEventListener("message", async ({ data }) => {
   const msg = JSON.parse(data) as JsonMsg;
 
   if (isJsonMsgSdp(msg)) {
+    // msg.sdp = msg.sdp.replace(
+    //   /(m=video.*\r\n)/g,
+    //   "$1a=fmtp:96 max-fs=12288;max-fr=60\r\n"
+    // );
     console.log("setRemoteDescription", msg.sdp);
     await peerConnection.setRemoteDescription({
       sdp: msg.sdp,

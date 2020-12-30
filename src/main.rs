@@ -45,7 +45,7 @@ async fn main(args: Args) -> Result<()> {
 
     if env::var("GST_DEBUG").is_err() {
         // show warnings
-        env::set_var("GST_DEBUG", "*:2");
+        env::set_var("GST_DEBUG", "*:2,GST_STATES:2,webrtcbin:4");
     }
 
     debug!("{:#?}", args);

@@ -11,7 +11,7 @@ use futures::{
     stream::StreamExt,
 };
 use gst::{gst_element_error, message::MessageView, prelude::*, Element, ElementFactory, Pipeline};
-use gst_sdp::*;
+use gst_sdp::SDPMessage;
 use gst_webrtc::*;
 use std::{
     net::SocketAddr,
@@ -147,8 +147,7 @@ impl App {
 
     #[tracing::instrument(fields(self))]
     pub async fn run(self) -> Result<()> {
-        let bus = self.pipeline.get_bus().unwrap();
-        let mut pipeline_bus_stream = bus.stream().fuse();
+        let mut pipeline_bus_stream = self.pipeline.get_bus().unwrap().stream().fuse();
 
         self.pipeline.call_async(|pipeline| {
             debug!("Setting Pipeline to Playing");
@@ -228,9 +227,53 @@ impl App {
             .get_by_name("webrtcbin")
             .expect("can't find webrtcbin");
 
+        // let webrtc_rtpbin = webrtcbin
+        //     .dynamic_cast_ref::<gst::Bin>()
+        //     .unwrap()
+        //     .get_by_name("rtpbin")
+        //     .expect("can't find webrtc_rtpbin");
+        //     // TODO
+        // webrtc_rtpbin.set_property_from_str("drop-on-latency", "true");
+        // webrtc_rtpbin.set_property_from_str("buffer-mode", "synced");
+        // webrtc_rtpbin.set_property_from_str("ntp-sync", "true");
+        // webrtc_rtpbin.set_property_from_str("ntp-time-source", "ntp");
+
         // Set some properties on webrtcbin
         webrtcbin.set_property_from_str("stun-server", "stun://stun.l.google.com:19302");
+        // webrtcbin.set_property_from_str("turn-server", "turn://a:b@34.217.45.217:3478");
         webrtcbin.set_property_from_str("bundle-policy", "max-bundle");
+
+        // let ice_agent = webrtcbin
+        //     .get_property("ice-agent")
+        //     .unwrap()
+        //     .get::<gst::Object>()
+        //     .expect("downcast")
+        //     .expect("option");
+
+        // add local ip so that accessing the stream on the
+        // same machine works in chrome
+        // for ip in &[
+        //     "10.0.0.2",
+        //     // "fded:fded:fded:0:514e:c105:1be7:b56b",
+        //     // "68.107.26.30",
+        //     // "2600:8801:be01:76e6:514e:c105:1be7:b56b",
+        //     // "127.0.0.1",
+        //     // "::1",
+        //     format!("{}", self.args.signal_server.ip()).as_str(),
+        // ] {
+        //     assert_eq!(
+        //         ice_agent
+        //             .emit("add-local-ip-address", &[ip],)
+        //             .unwrap()
+        //             .unwrap()
+        //             .get::<bool>()
+        //             .unwrap()
+        //             .unwrap(),
+        //         true,
+        //         "couldn't add {:?}",
+        //         ip
+        //     );
+        // }
 
         let mut offer_stream = {
             let (sender, receiver) = mpsc::unbounded();
@@ -361,26 +404,26 @@ impl App {
             .unwrap();
         video_src_pad.link(&video_sink_pad)?;
 
-            // If this fails, post an error on the bus so we exit
+        // If this fails, post an error on the bus so we exit
         if peer_bin.sync_state_with_parent().is_err() {
-                gst_element_error!(
+            gst_element_error!(
                 peer_bin,
-                    gst::LibraryError::Failed,
-                    ("Failed to set peer bin to Playing")
-                );
-            }
+                gst::LibraryError::Failed,
+                ("Failed to set peer bin to Playing")
+            );
+        }
 
-            // And now unblock
-            audio_src_pad.remove_probe(audio_block);
-            video_src_pad.remove_probe(video_block);
+        // And now unblock
+        audio_src_pad.remove_probe(audio_block);
+        video_src_pad.remove_probe(video_block);
 
         if self.pipeline.set_state(gst::State::Playing).is_err() {
-                gst_element_error!(
+            gst_element_error!(
                 self.pipeline,
-                    gst::LibraryError::Failed,
-                    ("Failed to set pipeline to Playing")
-                );
-            }
+                gst::LibraryError::Failed,
+                ("Failed to set pipeline to Playing")
+            );
+        }
 
         // wait for offer to generate (local-description is set)
         debug!("wait for offer");
@@ -426,14 +469,6 @@ impl App {
                         .await?;
                 },
 
-                // message = bus_stream.select_next_some() => {
-                //     if let MessageView::PropertyNotify(notify) = message.view() {
-                //         let structure = notify.get_structure().unwrap();
-                //         debug!("PropertyNotify {:#?}", structure);
-                //     }
-
-                //     Self::handle_pipeline_message(message)?;
-                // },
 
 
                 result = ws_receiver.select_next_some() => {
@@ -566,48 +601,3 @@ impl PipelineMake for Pipeline {
         Ok(element)
     }
 }
-
-// let ice_agent = webrtcbin
-//     .get_property("ice-agent")
-//     .unwrap()
-//     .get::<gst::Object>()
-//     .expect("downcast")
-//     .expect("option");
-
-// // add local ip so that accessing the stream on the
-// // same machine works in chrome
-// assert_eq!(
-//     ice_agent
-//         .emit(
-//             "add-local-ip-address",
-//             &[&format!("{}", self.args.signal_server.ip())],
-//         )
-//         .unwrap()
-//         .unwrap()
-//         .get::<bool>()
-//         .unwrap()
-//         .unwrap(),
-//     true
-// );
-
-// assert_eq!(
-//     ice_agent
-//         .emit("add-local-ip-address", &[&"127.0.0.1"],)
-//         .unwrap()
-//         .unwrap()
-//         .get::<bool>()
-//         .unwrap()
-//         .unwrap(),
-//     true
-// );
-
-// assert_eq!(
-//     ice_agent
-//         .emit("add-local-ip-address", &[&"68.107.26.30"],)
-//         .unwrap()
-//         .unwrap()
-//         .get::<bool>()
-//         .unwrap()
-//         .unwrap(),
-//     true
-// );

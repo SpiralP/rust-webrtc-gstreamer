@@ -9,10 +9,7 @@ anyhow = "1.0.36"
 futures = "0.3.8"
 glib = "0.10.3"
 gst = { package = "gstreamer", version = "0.16.5", features = ["v1_18"] }
-gst-audio = { package = "gstreamer-audio", version = "0.16.5", features = ["v1_18"] }
-gst-rtp = { package = "gstreamer-rtp", version = "0.16.5", features = ["v1_18"] }
 gst-sdp = { package = "gstreamer-sdp", version = "0.16.6", features = ["v1_18"] }
-gst-video = { package = "gstreamer-video", version = "0.16.6", features = ["v1_18"] }
 gst-webrtc = { package = "gstreamer-webrtc", version = "0.16.5", features = ["v1_18"] }
 num_cpus = "1.13.0"
 parceljs = { git = "https://github.com/SpiralP/rust-parceljs.git", features = ["warp"] }

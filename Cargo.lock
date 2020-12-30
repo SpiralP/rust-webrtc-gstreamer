@@ -35,15 +35,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.36"
+version = "1.0.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68803225a7b13e47191bab76f2687382b60d259e8cf37f6e1893658b84bb9479"
-
-[[package]]
-name = "array-init"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a51c983d65b6691893a791e55aa8bda43bbd9b11f947e5a9581710362277cc95"
+checksum = "ee67c11feeac938fae061b232e38e0b6d94f97a9df10e6271319325ac4c56a86"
 
 [[package]]
 name = "atty"
@@ -543,99 +537,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gstreamer-audio"
-version = "0.16.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b926a2fa1b6756cf4087fe54ac20bb9951131efe8529dfb5c151b490d9dfe242"
-dependencies = [
- "array-init",
- "bitflags",
- "glib",
- "glib-sys",
- "gobject-sys",
- "gstreamer",
- "gstreamer-audio-sys",
- "gstreamer-base",
- "gstreamer-base-sys",
- "gstreamer-sys",
- "libc",
- "once_cell",
-]
-
-[[package]]
-name = "gstreamer-audio-sys"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b614d5e478ad2ff6f5699757d03f11f2868ea43164c651c60449bd0e3c6b7d75"
-dependencies = [
- "glib-sys",
- "gobject-sys",
- "gstreamer-base-sys",
- "gstreamer-sys",
- "libc",
- "system-deps",
-]
-
-[[package]]
-name = "gstreamer-base"
-version = "0.16.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bafd01c56f59cb10f4b5a10f97bb4bdf8c2b2784ae5b04da7e2d400cf6e6afcf"
-dependencies = [
- "bitflags",
- "glib",
- "glib-sys",
- "gobject-sys",
- "gstreamer",
- "gstreamer-base-sys",
- "gstreamer-sys",
- "libc",
-]
-
-[[package]]
-name = "gstreamer-base-sys"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4b7b6dc2d6e160a1ae28612f602bd500b3fa474ce90bf6bb2f08072682beef5"
-dependencies = [
- "glib-sys",
- "gobject-sys",
- "gstreamer-sys",
- "libc",
- "system-deps",
-]
-
-[[package]]
-name = "gstreamer-rtp"
-version = "0.16.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d5d9af3443807c6220ea15ab850b72407ec138bd4652d2640513780a26ddd5b"
-dependencies = [
- "bitflags",
- "glib",
- "glib-sys",
- "gobject-sys",
- "gstreamer",
- "gstreamer-rtp-sys",
- "gstreamer-sys",
- "once_cell",
-]
-
-[[package]]
-name = "gstreamer-rtp-sys"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2bbc4521cfc8fba46e90acdf0de18e810e5a97b87dd376106e4efbddd6aa921"
-dependencies = [
- "glib-sys",
- "gobject-sys",
- "gstreamer-base-sys",
- "gstreamer-sys",
- "libc",
- "system-deps",
-]
-
-[[package]]
 name = "gstreamer-sdp"
 version = "0.16.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -670,41 +571,6 @@ checksum = "fc1f154082d01af5718c5f8a8eb4f565a4ea5586ad8833a8fc2c2aa6844b601d"
 dependencies = [
  "glib-sys",
  "gobject-sys",
- "libc",
- "system-deps",
-]
-
-[[package]]
-name = "gstreamer-video"
-version = "0.16.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75fb6c5bcc0d406ca4a47938b8592121ff98e7a8f4303c24def1722df9f203d5"
-dependencies = [
- "bitflags",
- "futures-channel",
- "futures-util",
- "glib",
- "glib-sys",
- "gobject-sys",
- "gstreamer",
- "gstreamer-base",
- "gstreamer-base-sys",
- "gstreamer-sys",
- "gstreamer-video-sys",
- "libc",
- "once_cell",
-]
-
-[[package]]
-name = "gstreamer-video-sys"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92347e46438007d6a2386302125f62cb9df6769cdacb931af5c0f12c1ee21de4"
-dependencies = [
- "glib-sys",
- "gobject-sys",
- "gstreamer-base-sys",
- "gstreamer-sys",
  "libc",
  "system-deps",
 ]
@@ -1639,10 +1505,7 @@ dependencies = [
  "futures",
  "glib",
  "gstreamer",
- "gstreamer-audio",
- "gstreamer-rtp",
  "gstreamer-sdp",
- "gstreamer-video",
  "gstreamer-webrtc",
  "num_cpus",
  "parceljs",
@@ -1738,9 +1601,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.60"
+version = "1.0.61"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1500e84d27fe482ed1dc791a56eddc2f230046a040fa908c08bda1d9fb615779"
+checksum = "4fceb2595057b6891a4ee808f70054bd2d12f0e97f1cbb78689b59f676df325a"
 dependencies = [
  "itoa",
  "ryu",
