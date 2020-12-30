@@ -101,11 +101,13 @@ signalingConnection.addEventListener("message", async ({ data }) => {
   } else if (isJsonMsgIce(msg)) {
     if (
       (location.hostname === "localhost" ||
-        location.hostname === "127.0.0.1") &&
+        location.hostname.startsWith("127.0.0.") ||
+        location.hostname.startsWith("10.0.0.") ||
+        location.hostname.startsWith("192.168.1.")) &&
       msg.ice.candidate.indexOf(" UDP ") !== -1
     ) {
-      // fix for chrome on localhost connecting to udp first, but not being able to send any data
-      // so we let TCP go first
+      // fix for chrome on localhost connecting to udp first and
+      // causing the video to hang, so we let TCP go first
       await sleep(2000);
     }
 
