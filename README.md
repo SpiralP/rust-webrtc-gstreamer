@@ -1,10 +1,12 @@
 # rust-webrtc-gstreamer
 
-## Install
+Hosts a low-latency WebRTC video server that takes an input source from normal tools like OBS.
 
-## Prerequisites
+## Building
 
-[GStreamer](https://gstreamer.freedesktop.org/download/) **v1.18+** development installer and runtime installer
+- [Node.js](https://nodejs.org/en/) with NPM
+
+- [GStreamer](https://gstreamer.freedesktop.org/download/) **v1.18+** development installer and runtime installer
 
 `pkg-config` should be able to find `gstreamer-1.0`, `gstreamer-sdp-1.0`, and similar plugins
 
@@ -15,6 +17,8 @@ brew doesn't come with gstreamer-sdp-1.0, so you have to use the main download (
 ### Linux
 
 take a look at [my Dockerfile](.devcontainer\Dockerfile), debian:testing or ubuntu 20.10 (groovy) have gstreamer 1.18
+
+## Install
 
 ```
 cargo install --git https://github.com/SpiralP/rust-webrtc-gstreamer.git
