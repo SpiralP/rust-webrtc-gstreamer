@@ -2,6 +2,20 @@
 
 ## Install
 
+## Prerequisites
+
+[GStreamer](https://gstreamer.freedesktop.org/download/) **v1.18+** development installer and runtime installer
+
+`pkg-config` should be able to find `gstreamer-1.0`, `gstreamer-sdp-1.0`, and similar plugins
+
+### macOS
+
+brew doesn't come with gstreamer-sdp-1.0, so you have to use the main download (which puts things in a weird `/Library/Frameworks/GStreamer.framework/Versions/Current` location, make sure to set `PKG_CONFIG_PATH` to the `lib/pkgconfig` directory)
+
+### Linux
+
+take a look at [my Dockerfile](.devcontainer\Dockerfile), debian:testing or ubuntu 20.10 (groovy) have gstreamer 1.18
+
 ```
 cargo install --git https://github.com/SpiralP/rust-webrtc-gstreamer.git
 ```
