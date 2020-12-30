@@ -14,13 +14,15 @@ use gst::{gst_element_error, message::MessageView, prelude::*, Element, ElementF
 use gst_sdp::SDPMessage;
 use gst_webrtc::*;
 use std::{
-    net::SocketAddr,
+    net::{SocketAddr, ToSocketAddrs},
     ops,
     os::raw::c_int,
     sync::{Arc, Weak},
 };
 use tracing::*;
 use warp::{path::FullPath, ws, Filter};
+
+const STUN_ADDRESS: &str = "stun.l.google.com:19302";
 
 include!(concat!(env!("OUT_DIR"), "/parceljs.rs"));
 
@@ -46,6 +48,7 @@ pub struct AppInner {
     pipeline: Pipeline,
     video_tee: Element,
     audio_tee: Element,
+    stun_address: String,
 }
 
 // To be able to access the App's fields directly
@@ -63,15 +66,24 @@ impl App {
         AppWeak(Arc::downgrade(&self.0))
     }
 
-    #[tracing::instrument]
+    #[tracing::instrument(fields(args))]
     pub fn new(args: Args) -> Result<Self> {
         let (pipeline, video_tee, audio_tee) = Self::setup(&args)?;
+
+        // libnice doesn't like ipv6 stun addresses, so resolve an ipv4 one
+        let stun_address = STUN_ADDRESS
+            .to_socket_addrs()?
+            .find(|addr| addr.is_ipv4())
+            .map(|addr| format!("{:?}", addr))
+            .unwrap_or(STUN_ADDRESS.to_string());
+        info!("using STUN {}", stun_address);
 
         Ok(App(Arc::new(AppInner {
             args,
             pipeline,
             video_tee,
             audio_tee,
+            stun_address,
         })))
     }
 
@@ -238,10 +250,8 @@ impl App {
         // webrtc_rtpbin.set_property_from_str("ntp-sync", "true");
         // webrtc_rtpbin.set_property_from_str("ntp-time-source", "ntp");
 
-        // Set some properties on webrtcbin
-        webrtcbin.set_property_from_str("stun-server", "stun://stun.l.google.com:19302");
-        // webrtcbin.set_property_from_str("turn-server", "turn://a:b@34.217.45.217:3478");
         webrtcbin.set_property_from_str("bundle-policy", "max-bundle");
+        webrtcbin.set_property_from_str("stun-server", &format!("stun://{}", self.stun_address));
 
         // let ice_agent = webrtcbin
         //     .get_property("ice-agent")
@@ -250,29 +260,72 @@ impl App {
         //     .expect("downcast")
         //     .expect("option");
 
-        // add local ip so that accessing the stream on the
-        // same machine works in chrome
-        // for ip in &[
-        //     "10.0.0.2",
-        //     // "fded:fded:fded:0:514e:c105:1be7:b56b",
-        //     // "68.107.26.30",
-        //     // "2600:8801:be01:76e6:514e:c105:1be7:b56b",
-        //     // "127.0.0.1",
-        //     // "::1",
-        //     format!("{}", self.args.signal_server.ip()).as_str(),
-        // ] {
-        //     assert_eq!(
-        //         ice_agent
-        //             .emit("add-local-ip-address", &[ip],)
-        //             .unwrap()
-        //             .unwrap()
-        //             .get::<bool>()
-        //             .unwrap()
-        //             .unwrap(),
-        //         true,
-        //         "couldn't add {:?}",
-        //         ip
+        // unsafe {
+        //     use gst::glib::translate::*;
+        //     use libnice_sys::*;
+        //     // const NICE_COMPONENT_TYPE_RTP: c_uint = 1;
+
+        //     let mut agent: *mut NiceAgent = std::ptr::null_mut();
+        //     let agent_str = std::ffi::CString::new("agent").unwrap();
+        //     gobject_sys::g_object_get(
+        //         ice_agent.as_object_ref().to_glib_none().0,
+        //         agent_str.as_ptr(),
+        //         &mut agent,
+        //         0 as *const (),
         //     );
+
+        //     let agent: gst::glib::Object = from_glib_none(agent as *mut gobject_sys::GObject);
+
+        //     agent.set_property_from_str("stun-initial-timeout", "1000");
+        //     agent.set_property_from_str("stun-max-retransmissions", "99");
+        //     agent.set_property_from_str("stun-reliable-timeout", "10000");
+        // }
+
+        //     // nice_agent_set_port_range(agent, 1, NICE_COMPONENT_TYPE_RTP, 61234, 61234);
+
+        //     for (ip, port) in &[
+        //         ("10.0.0.2", 61234),
+        //         ("68.107.26.30", 61234),
+        //         /* "2600:8801:be01:76e6:514e:c105:1be7:b56b",
+        //          * "10.0.0.2",
+        //          * "fded:fded:fded:0:514e:c105:1be7:b56b",
+        //          * "127.0.0.1",
+        //          * "::1",
+        //          * format!("{}", self.args.signal_server.ip()).as_str(), */
+        //     ] {
+        //         use libnice_sys::*;
+
+        //         let address = std::ffi::CString::new(*ip).unwrap();
+        //         let mut nice_addr: NiceAddress = std::mem::zeroed();
+        //         nice_address_init(&mut nice_addr);
+
+        //         let mut ret = nice_address_set_from_string(&mut nice_addr, address.as_ptr());
+
+        //         if ret != 0 {
+        //             nice_address_set_port(&mut nice_addr, *port);
+
+        //             ret = nice_agent_add_local_address(agent, &mut nice_addr);
+        //             if ret != 0 {
+        //             } else {
+        //                 panic!("Failed to add local address to NiceAgent");
+        //             }
+        //         } else {
+        //             panic!("Failed to initialize NiceAddress [{:?}]", address);
+        //         }
+
+        //         // assert_eq!(
+        //         //     ice_agent
+        //         //         .emit("add-local-ip-address", &[ip],)
+        //         //         .unwrap()
+        //         //         .unwrap()
+        //         //         .get::<bool>()
+        //         //         .unwrap()
+        //         //         .unwrap(),
+        //         //     true,
+        //         //     "couldn't add {:?}",
+        //         //     ip
+        //         // );
+        //     }
         // }
 
         let mut offer_stream = {
@@ -324,11 +377,16 @@ impl App {
             let (sender, receiver) = mpsc::unbounded();
 
             webrtcbin.connect("on-ice-candidate", false, move |values| {
+                let span = debug_span!("on-ice-candidate");
+                let _enter = span.enter();
+
                 let _webrtcbin = values[0].get::<gst::Element>().unwrap().unwrap();
                 let sdp_m_line_index = values[1].get::<u32>().unwrap().unwrap();
                 let candidate = values[2].get::<String>().unwrap().unwrap();
 
-                // debug!("on-ice-candidate: {} {}", sdp_m_line_index, candidate);
+                if candidate.contains("srflx") {
+                    debug!("{} {}", sdp_m_line_index, candidate);
+                }
                 sender
                     .unbounded_send(JsonMsg::Ice {
                         sdp_m_line_index,
@@ -451,6 +509,9 @@ impl App {
             };
         }
 
+        let mut bus_stream = self.pipeline.get_bus().unwrap().stream().fuse();
+        webrtcbin.add_property_notify_watch(None, true);
+
         debug!("loop");
         // now begin sending/receiving ice candidates
         loop {
@@ -469,7 +530,14 @@ impl App {
                         .await?;
                 },
 
+                message = bus_stream.select_next_some() => {
+                    if let MessageView::PropertyNotify(notify) = message.view() {
+                        let structure = notify.get_structure().unwrap();
+                        debug!("PropertyNotify {:#?}", structure);
+                    }
 
+                    Self::handle_pipeline_message(message)?;
+                },
 
                 result = ws_receiver.select_next_some() => {
                     let message = result?;

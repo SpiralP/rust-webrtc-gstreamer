@@ -12,6 +12,7 @@ RUN export DEBIAN_FRONTEND=noninteractive \
   && apt-get -y install --no-install-recommends \
   # compile-time libs
   libglib2.0-dev libgstreamer1.0-dev libgstreamer-plugins-bad1.0-dev \
+  # libnice-dev libclang-dev \
   nodejs \
   # runtime libs
   gstreamer1.0-libav \

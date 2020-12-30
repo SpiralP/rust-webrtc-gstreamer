@@ -95,11 +95,25 @@ signalingConnection.addEventListener("message", async ({ data }) => {
     await peerConnection.setLocalDescription(answer);
 
     const answerMsg: JsonMsgSdp = {
-      sdp: peerConnection.localDescription.sdp,
+      sdp: answer.sdp,
     };
     signalingConnection.send(JSON.stringify(answerMsg));
   } else if (isJsonMsgIce(msg)) {
+    if (
+      (location.hostname === "localhost" ||
+        location.hostname === "127.0.0.1") &&
+      msg.ice.candidate.indexOf(" UDP ") !== -1
+    ) {
+      // fix for chrome on localhost connecting to udp first, but not being able to send any data
+      // so we let TCP go first
+      await sleep(2000);
+    }
+
     console.log("remote candidate", msg.ice.candidate);
     await peerConnection.addIceCandidate(msg.ice);
   }
 });
+
+async function sleep(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
