@@ -16,7 +16,7 @@ brew doesn't come with gstreamer-sdp-1.0, so you have to use the main download (
 
 ### Linux
 
-take a look at [my Dockerfile](.devcontainer\Dockerfile), debian:testing or ubuntu 20.10 (groovy) have gstreamer 1.18
+take a look at [my Dockerfile](.devcontainer/Dockerfile), debian:testing or ubuntu 20.10 (groovy) have gstreamer 1.18
 
 ## Install
 
@@ -45,7 +45,7 @@ ffmpeg -re -i a.mp4 -vcodec libx264 -acodec aac -ac 2 -f mpegts tcp://127.0.0.1:
 
 ## Reference
 
-https://github.com/centricular/gstwebrtc-demos/blob/master/multiparty-sendrecv/gst-rust/src/main.rs#L312
+https://github.com/centricular/gstwebrtc-demos/blob/e4b86bc4f151e35222aff1bf7e46cec016e7b0ee/multiparty-sendrecv/gst-rust/src/main.rs#L311
 
 http://www.francescpinyol.cat/gstreamer.html
 
