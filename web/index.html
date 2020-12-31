@@ -19,10 +19,10 @@
   <body>
     <video id="video" autoplay controls></video>
     <script>
-      const player = document.getElementById("video");
+      const video = document.getElementById("video");
       function updateSize() {
-        player.width = window.innerWidth;
-        player.height = window.innerHeight;
+        video.width = window.innerWidth;
+        video.height = window.innerHeight;
       }
 
       window.addEventListener("resize", () => {
