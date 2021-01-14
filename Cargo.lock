@@ -1501,6 +1501,7 @@ dependencies = [
 name = "rust-webrtc-gstreamer"
 version = "0.1.0"
 dependencies = [
+ "ansi_term 0.12.1",
  "anyhow",
  "futures",
  "glib",

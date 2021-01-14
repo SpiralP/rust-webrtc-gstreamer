@@ -4,7 +4,7 @@ mod macros;
 
 use self::app::{App, Args};
 use anyhow::*;
-use std::env;
+use std::{env, time::Duration};
 use tracing::*;
 
 // Check if all GStreamer plugins we require are available
@@ -41,21 +41,34 @@ fn check_plugins() -> Result<()> {
 #[paw::main]
 #[tokio::main]
 async fn main(args: Args) -> Result<()> {
+    #[cfg(target_os = "windows")]
+    if let Err(e) = ansi_term::enable_ansi_support() {
+        eprintln!("enable_ansi_support: {}", e);
+    }
+
     logger::initialize(true, false);
+
+    debug!("{:#?}", args);
 
     if env::var("GST_DEBUG").is_err() {
         // show warnings
         env::set_var("GST_DEBUG", "*:2,GST_STATES:2,webrtcbin:2");
     }
 
-    debug!("{:#?}", args);
-
     // Initialize GStreamer first
     gst::init()?;
     check_plugins()?;
 
     // Create our application state
-    let app = App::new(args)?;
+    let (app, stats) = App::new(args)?;
+
+    tokio::spawn(async move {
+        loop {
+            tokio::time::delay_for(Duration::from_millis(500)).await;
+            let mut stats = stats.lock().await;
+            stats.print();
+        }
+    });
 
     // All good, let's run our message loop
     app.run().await?;

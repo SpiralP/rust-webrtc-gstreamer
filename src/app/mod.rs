@@ -1,12 +1,14 @@
+mod stats;
 mod types;
 
 pub use self::types::Args;
-use self::types::JsonMsg;
+use self::{stats::Stats, types::JsonMsg};
 use crate::{concat_spaces, upgrade_weak};
 use anyhow::*;
 use futures::{
     channel::{mpsc, oneshot},
     future::FutureExt,
+    lock::Mutex,
     sink::SinkExt,
     stream::StreamExt,
 };
@@ -14,7 +16,7 @@ use gst::{gst_element_error, message::MessageView, prelude::*, Element, ElementF
 use gst_sdp::SDPMessage;
 use gst_webrtc::*;
 use std::{
-    net::{SocketAddr, ToSocketAddrs},
+    net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs},
     ops,
     os::raw::c_int,
     sync::{Arc, Weak},
@@ -49,6 +51,7 @@ pub struct AppInner {
     video_tee: Element,
     audio_tee: Element,
     stun_address: String,
+    stats: Arc<Mutex<Stats>>,
 }
 
 // To be able to access the App's fields directly
@@ -66,8 +69,8 @@ impl App {
         AppWeak(Arc::downgrade(&self.0))
     }
 
-    #[tracing::instrument(fields(args))]
-    pub fn new(args: Args) -> Result<Self> {
+    #[tracing::instrument(skip(args))]
+    pub fn new(args: Args) -> Result<(Self, Arc<Mutex<Stats>>)> {
         let (pipeline, video_tee, audio_tee) = Self::setup(&args)?;
 
         // libnice doesn't like ipv6 stun addresses, so resolve an ipv4 one
@@ -78,13 +81,18 @@ impl App {
             .unwrap_or(STUN_ADDRESS.to_string());
         info!("using STUN {}", stun_address);
 
-        Ok(App(Arc::new(AppInner {
-            args,
-            pipeline,
-            video_tee,
-            audio_tee,
-            stun_address,
-        })))
+        let stats = Arc::new(Mutex::new(Stats::new()));
+        Ok((
+            App(Arc::new(AppInner {
+                args,
+                pipeline,
+                video_tee,
+                audio_tee,
+                stun_address,
+                stats: stats.clone(),
+            })),
+            stats,
+        ))
     }
 
     /// returns (pipeline, video_tee, audio_tee)
@@ -92,10 +100,10 @@ impl App {
     fn setup(args: &Args) -> Result<(Pipeline, Element, Element)> {
         let pipeline = format!(
             concat_spaces!(
-                "tcpserversrc host={ip} port={port} ! queue",
+                "tcpserversrc host={ip} port={port} name=tcpserversrc ! queue",
                 // set-timestamps=true makes it weird!
                 "  ! tsparse",
-                "  ! tsdemux name=demux",
+                "  ! tsdemux name=demux latency=700",
                 ////////////////
                 // video
                 "demux. ! queue",
@@ -105,7 +113,7 @@ impl App {
                 "  ! avdec_h264 ! queue",
                 // encode vp9 (rtp)
                 "  ! videoconvert ! videoscale ! videorate ! queue",
-                "  ! video/x-raw,width=1280,height=720,framerate=30/1",
+                // "  ! video/x-raw,width=1280,height=720,framerate=30/1",
                 "  ! vp9enc",
                 "    end-usage=cbr",
                 "    cpu-used={cpu_used}",
@@ -120,7 +128,7 @@ impl App {
                 "    target-bitrate={video_bitrate}",
                 "  ! video/x-vp9 ! queue",
                 "  ! rtpvp9pay pt=96 ! queue",
-                "  ! tee name=video-tee allow-not-linked=true",
+                "  ! tee name=video-tee ! fakesink",
                 // "  ! rtpvp9depay ! vp9dec ! videoconvert ! autovideosink",
                 ////////////////
                 // audio
@@ -131,12 +139,12 @@ impl App {
                 "  ! avdec_aac ! queue",
                 // encode opus (rtp)
                 "  ! audioconvert ! audioresample ! queue",
-                "  ! audio/x-raw,channels=2,rate=48000",
+                "  ! audio/x-raw,channels=2",
                 "  ! opusenc",
                 "    bitrate=128000",
                 "  ! audio/x-opus ! queue",
                 "  ! rtpopuspay pt=97 ! queue",
-                "  ! tee name=audio-tee allow-not-linked=true",
+                "  ! tee name=audio-tee ! fakesink",
             ),
             ip = args.stream_server.ip(),
             port = args.stream_server.port(),
@@ -157,52 +165,84 @@ impl App {
     // <- { sdp: "offer....." } // contains 1 candidate
     // -> { sdp: "answer....." }
 
-    #[tracing::instrument(fields(self))]
+    #[tracing::instrument(skip(self))]
     pub async fn run(self) -> Result<()> {
         let mut pipeline_bus_stream = self.pipeline.get_bus().unwrap().stream().fuse();
-
-        self.pipeline.call_async(|pipeline| {
+        {
             debug!("Setting Pipeline to Playing");
-            pipeline
+            self.pipeline
                 .set_state(gst::State::Playing)
                 .expect("Couldn't set pipeline to Playing");
-        });
 
-        info!(
-            "starting http/websocket server on http://{}/",
-            &self.args.signal_server
-        );
+            let mut stats = self.stats.lock().await;
+            stats.set_state(stats::State::WaitingForStream);
+        }
 
-        let weak_app = self.downgrade();
-        let routes = warp::path("ws")
-            .and(warp::addr::remote().and(warp::ws()).map(
-                move |addr: Option<SocketAddr>, ws: warp::ws::Ws| {
-                    let weak_app = weak_app.clone();
+        let (mut warp_future, warp_shutdown_signal) = {
+            info!(
+                "starting http/websocket server on http://{}/",
+                &self.args.signal_server
+            );
 
-                    ws.on_upgrade(move |websocket| async move {
-                        debug!("New WebSocket connection: {:?}", addr);
+            let weak_app = self.downgrade();
+            let routes = warp::path("ws")
+                .and(warp::addr::remote().and(warp::ws()).map(
+                    move |addr: Option<SocketAddr>, ws: warp::ws::Ws| {
+                        let weak_app = weak_app.clone();
 
-                        tokio::spawn(async move {
-                            let app = upgrade_weak!(weak_app);
+                        ws.on_upgrade(move |websocket| async move {
+                            let addr = addr.unwrap_or(SocketAddr::new(
+                                IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+                                0,
+                            ));
 
-                            app.on_new_client(websocket).await.unwrap();
+                            tokio::spawn(async move {
+                                let app = upgrade_weak!(weak_app);
 
-                            debug!("on_new_client done");
-                        });
-                    })
-                },
-            ))
-            .or(warp::path::full().map(|path: FullPath| {
-                debug!("http {}", path.as_str());
-                PARCELJS.as_reply(path)
-            }));
+                                {
+                                    let mut stats = app.stats.lock().await;
+                                    stats.on_client_connected(addr);
+                                }
+                                app.handle_client_loop(websocket, addr).await.unwrap();
+                                {
+                                    let mut stats = app.stats.lock().await;
+                                    stats.on_client_disconnected(addr);
+                                }
+                            });
+                        })
+                    },
+                ))
+                .or(warp::path::full().map(|path: FullPath| {
+                    // debug!("http {}", path.as_str());
+                    PARCELJS.as_reply(path)
+                }));
 
-        let mut warp_future = warp::serve(routes).bind(self.args.signal_server).fuse();
+            let (warp_shutdown_signal, warp_shutdown_signal_rx) = oneshot::channel();
+
+            let (_addr, warp_server) =
+                warp::serve(routes).bind_with_graceful_shutdown(self.args.signal_server, async {
+                    let _ = warp_shutdown_signal_rx.await;
+                });
+
+            (warp_server.boxed().fuse(), warp_shutdown_signal)
+        };
 
         loop {
             futures::select! {
                 message = pipeline_bus_stream.select_next_some() => {
-                    Self::handle_pipeline_message(message)?;
+                    match message.view() {
+                        MessageView::PropertyNotify(notify) => {
+                            let structure = notify.get_structure().unwrap();
+                            debug!("PropertyNotify {:#?}", structure);
+                        }
+
+                        _ => {}
+                    }
+
+                    if self.handle_pipeline_message(message).await?  {
+                        let _ = warp_shutdown_signal.send(());
+                        break;
+                    }
                 },
 
                 _ = warp_future => {
@@ -211,11 +251,19 @@ impl App {
             };
         }
 
+        self.pipeline
+            .set_state(gst::State::Null)
+            .expect("Unable to set the pipeline to the `Null` state");
+
         Ok(())
     }
 
-    #[tracing::instrument(fields(self, websocket))]
-    async fn on_new_client(&self, websocket: warp::ws::WebSocket) -> Result<()> {
+    #[tracing::instrument(skip(self, websocket))]
+    async fn handle_client_loop(
+        &self,
+        websocket: warp::ws::WebSocket,
+        addr: SocketAddr,
+    ) -> Result<()> {
         debug!("new client");
 
         let (mut ws_sender, ws_receiver) = websocket.split();
@@ -238,95 +286,10 @@ impl App {
         let webrtcbin = peer_bin
             .get_by_name("webrtcbin")
             .expect("can't find webrtcbin");
-
-        // let webrtc_rtpbin = webrtcbin
-        //     .dynamic_cast_ref::<gst::Bin>()
-        //     .unwrap()
-        //     .get_by_name("rtpbin")
-        //     .expect("can't find webrtc_rtpbin");
-        //     // TODO
-        // webrtc_rtpbin.set_property_from_str("drop-on-latency", "true");
-        // webrtc_rtpbin.set_property_from_str("buffer-mode", "synced");
-        // webrtc_rtpbin.set_property_from_str("ntp-sync", "true");
-        // webrtc_rtpbin.set_property_from_str("ntp-time-source", "ntp");
+        webrtcbin.add_property_notify_watch(None, true);
 
         webrtcbin.set_property_from_str("bundle-policy", "max-bundle");
         webrtcbin.set_property_from_str("stun-server", &format!("stun://{}", self.stun_address));
-
-        // let ice_agent = webrtcbin
-        //     .get_property("ice-agent")
-        //     .unwrap()
-        //     .get::<gst::Object>()
-        //     .expect("downcast")
-        //     .expect("option");
-
-        // unsafe {
-        //     use gst::glib::translate::*;
-        //     use libnice_sys::*;
-        //     // const NICE_COMPONENT_TYPE_RTP: c_uint = 1;
-
-        //     let mut agent: *mut NiceAgent = std::ptr::null_mut();
-        //     let agent_str = std::ffi::CString::new("agent").unwrap();
-        //     gobject_sys::g_object_get(
-        //         ice_agent.as_object_ref().to_glib_none().0,
-        //         agent_str.as_ptr(),
-        //         &mut agent,
-        //         0 as *const (),
-        //     );
-
-        //     let agent: gst::glib::Object = from_glib_none(agent as *mut gobject_sys::GObject);
-
-        //     agent.set_property_from_str("stun-initial-timeout", "1000");
-        //     agent.set_property_from_str("stun-max-retransmissions", "99");
-        //     agent.set_property_from_str("stun-reliable-timeout", "10000");
-        // }
-
-        //     // nice_agent_set_port_range(agent, 1, NICE_COMPONENT_TYPE_RTP, 61234, 61234);
-
-        //     for (ip, port) in &[
-        //         ("10.0.0.2", 61234),
-        //         ("68.107.26.30", 61234),
-        //         /* "2600:8801:be01:76e6:514e:c105:1be7:b56b",
-        //          * "10.0.0.2",
-        //          * "fded:fded:fded:0:514e:c105:1be7:b56b",
-        //          * "127.0.0.1",
-        //          * "::1",
-        //          * format!("{}", self.args.signal_server.ip()).as_str(), */
-        //     ] {
-        //         use libnice_sys::*;
-
-        //         let address = std::ffi::CString::new(*ip).unwrap();
-        //         let mut nice_addr: NiceAddress = std::mem::zeroed();
-        //         nice_address_init(&mut nice_addr);
-
-        //         let mut ret = nice_address_set_from_string(&mut nice_addr, address.as_ptr());
-
-        //         if ret != 0 {
-        //             nice_address_set_port(&mut nice_addr, *port);
-
-        //             ret = nice_agent_add_local_address(agent, &mut nice_addr);
-        //             if ret != 0 {
-        //             } else {
-        //                 panic!("Failed to add local address to NiceAgent");
-        //             }
-        //         } else {
-        //             panic!("Failed to initialize NiceAddress [{:?}]", address);
-        //         }
-
-        //         // assert_eq!(
-        //         //     ice_agent
-        //         //         .emit("add-local-ip-address", &[ip],)
-        //         //         .unwrap()
-        //         //         .unwrap()
-        //         //         .get::<bool>()
-        //         //         .unwrap()
-        //         //         .unwrap(),
-        //         //     true,
-        //         //     "couldn't add {:?}",
-        //         //     ip
-        //         // );
-        //     }
-        // }
 
         let mut offer_stream = {
             let (sender, receiver) = mpsc::unbounded();
@@ -335,14 +298,14 @@ impl App {
             webrtcbin.connect("on-negotiation-needed", false, move |values| {
                 let webrtcbin = values[0].get::<Element>().unwrap().unwrap();
 
-                debug!("on-negotiation-needed");
+                // debug!("on-negotiation-needed");
 
                 let promise = {
                     let webrtcbin = webrtcbin.clone();
                     let sender = sender.clone();
 
                     gst::Promise::with_change_func(move |reply| {
-                        debug!("create-offer callback");
+                        // debug!("create-offer callback");
 
                         let structure = reply.unwrap().unwrap();
                         let description = structure
@@ -384,9 +347,9 @@ impl App {
                 let sdp_m_line_index = values[1].get::<u32>().unwrap().unwrap();
                 let candidate = values[2].get::<String>().unwrap().unwrap();
 
-                if candidate.contains("srflx") {
-                    debug!("{} {}", sdp_m_line_index, candidate);
-                }
+                // if candidate.contains("srflx") {
+                //     debug!("{} {}", sdp_m_line_index, candidate);
+                // }
                 sender
                     .unbounded_send(JsonMsg::Ice {
                         sdp_m_line_index,
@@ -424,7 +387,7 @@ impl App {
 
         self.pipeline.add(&peer_bin).unwrap();
 
-        for i in 0.. {
+        for i in 0..2 {
             let transceiver = webrtcbin
                 .emit("get-transceiver", &[&(i as c_int)])
                 .unwrap()
@@ -475,6 +438,7 @@ impl App {
         audio_src_pad.remove_probe(audio_block);
         video_src_pad.remove_probe(video_block);
 
+        let mut webrtcbin_bus_stream = webrtcbin.get_bus().unwrap().stream().fuse();
         if self.pipeline.set_state(gst::State::Playing).is_err() {
             gst_element_error!(
                 self.pipeline,
@@ -484,11 +448,10 @@ impl App {
         }
 
         // wait for offer to generate (local-description is set)
-        debug!("wait for offer");
         loop {
             futures::select! {
                 offer = offer_stream.select_next_some() => {
-                    debug!("set-local-description");
+                    // debug!("set-local-description");
 
                     ws_sender
                         .send(ws::Message::text(serde_json::to_string(&offer)?))
@@ -501,18 +464,14 @@ impl App {
                     let message = result?;
 
                     if message.is_close() {
-                        debug!("websocket closed");
+                        // debug!("websocket closed");
                         self.remove_peer(&peer_bin);
-                        break;
+                        return Ok(());
                     }
                 },
             };
         }
 
-        let mut bus_stream = self.pipeline.get_bus().unwrap().stream().fuse();
-        webrtcbin.add_property_notify_watch(None, true);
-
-        debug!("loop");
         // now begin sending/receiving ice candidates
         loop {
             futures::select! {
@@ -530,13 +489,39 @@ impl App {
                         .await?;
                 },
 
-                message = bus_stream.select_next_some() => {
-                    if let MessageView::PropertyNotify(notify) = message.view() {
-                        let structure = notify.get_structure().unwrap();
-                        debug!("PropertyNotify {:#?}", structure);
+                message = webrtcbin_bus_stream.select_next_some() => {
+                    match message.view() {
+                        MessageView::PropertyNotify(notify) => {
+                            if let (_object, key, Some(value)) = notify.get() {
+                                match key {
+                                    "connection-state" => {
+                                        let state = value.get::<gst_webrtc::WebRTCPeerConnectionState>().unwrap().unwrap();
+                                        // gotta spawn because weird Send *mut c_void error??
+                                        let weak_app = self.downgrade();
+                                        tokio::spawn(async move {
+                                            let app = upgrade_weak!(weak_app);
+                                            let mut stats = app.stats.lock().await;
+                                            stats.on_client_state(addr, state);
+                                        });
+                                    }
+
+                                    // "ice-connection-state" => {
+                                    //     let state = value.get::<gst_webrtc::WebRTCICEConnectionState>().unwrap();
+                                    //     debug!("!! {:?} {:?}", key, state);
+                                    // }
+
+                                    _ => {}
+                                }
+                            }
+                        }
+
+                        _ => {}
                     }
 
-                    Self::handle_pipeline_message(message)?;
+                    if self.handle_pipeline_message(message).await? {
+                        self.remove_peer(&peer_bin);
+                        return Ok(());
+                    }
                 },
 
                 result = ws_receiver.select_next_some() => {
@@ -545,7 +530,7 @@ impl App {
                     if message.is_close() {
                         debug!("websocket closed");
                         self.remove_peer(&peer_bin);
-                        break;
+                        return Ok(());
                     } else if let Ok(text) = message.to_str() {
                         let message = serde_json::from_str::<JsonMsg>(&text)?;
 
@@ -563,7 +548,7 @@ impl App {
                                     sender.send(()).unwrap();
                                 });
 
-                                debug!("set-remote-description");
+                                // debug!("set-remote-description");
                                 webrtcbin
                                     .emit(
                                         "set-remote-description",
@@ -575,8 +560,8 @@ impl App {
                             }
 
                             JsonMsg::Ice { sdp_m_line_index, candidate } => {
-                                debug!("add-ice-candidate");
-                                debug!("{}", candidate);
+                                // debug!("add-ice-candidate");
+                                // debug!("{}", candidate);
 
                                 webrtcbin
                                 .emit(
@@ -590,8 +575,6 @@ impl App {
                 },
             };
         }
-
-        Ok(())
     }
 
     fn remove_peer(&self, peer_bin: &gst::Bin) {
@@ -617,8 +600,8 @@ impl App {
                 let _ = audio_tee_srcpad.unlink(&audio_sinkpad);
                 self.audio_tee.release_request_pad(&audio_tee_srcpad);
             }
-            audio_tee_sinkpad.remove_probe(audio_block);
         }
+        audio_tee_sinkpad.remove_probe(audio_block);
 
         if let Some(video_sinkpad) = peer_bin.get_static_pad("video_sink") {
             if let Some(video_tee_srcpad) = video_sinkpad.get_peer() {
@@ -632,11 +615,39 @@ impl App {
         let _ = self.pipeline.remove(peer_bin);
         let _ = peer_bin.set_state(gst::State::Null);
 
-        debug!("Removed");
+        // self.audio_tee.set_state(gst::State::Playing).unwrap();
+        // self.video_tee.set_state(gst::State::Playing).unwrap();
+        // debug!("Setting Pipeline to Playing");
+        // self.pipeline
+        //     .set_state(gst::State::Playing)
+        //     .expect("Couldn't set pipeline to Playing");
+
+        debug!("Removed peer");
     }
 
-    fn handle_pipeline_message(message: gst::Message) -> Result<()> {
+    /// returns true if should cleanup and return
+    #[must_use]
+    async fn handle_pipeline_message(&self, message: gst::Message) -> Result<bool> {
         match message.view() {
+            MessageView::StateChanged(message) => {
+                if let Some(src) = message.get_src() {
+                    if src.is::<gst::Pipeline>() {
+                        if message.get_current() == gst::State::Playing {
+                            let mut stats = self.stats.lock().await;
+                            stats.set_state(stats::State::Streaming);
+                        }
+                    }
+                }
+            }
+
+            MessageView::Eos(_) => {
+                {
+                    let mut stats = self.stats.lock().await;
+                    stats.set_state(stats::State::StreamEnded);
+                }
+                return Ok(true);
+            }
+
             MessageView::Error(err) => {
                 bail!(
                     "Error from element {}: {} ({})",
@@ -655,7 +666,7 @@ impl App {
             _ => {}
         }
 
-        Ok(())
+        Ok(false)
     }
 }
 

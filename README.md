@@ -10,6 +10,13 @@ Hosts a low-latency WebRTC video server that takes an input source from normal t
 
 `pkg-config` should be able to find `gstreamer-1.0`, `gstreamer-sdp-1.0`, and similar plugins
 
+### Windows
+
+GStreamer needs to have additional features set in installer:
+
+- restricted codecs
+- libav wrapper
+
 ### macOS
 
 brew doesn't come with gstreamer-sdp-1.0, so you have to use the main download (which puts things in a weird `/Library/Frameworks/GStreamer.framework/Versions/Current` location, make sure to set `PKG_CONFIG_PATH` to the `lib/pkgconfig` directory)

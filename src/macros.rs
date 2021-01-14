@@ -26,4 +26,5 @@ fn test_concat_spaces() {
     assert_eq!(concat_spaces!("a", "b", "c"), "a b c ");
     assert_eq!(concat_spaces!("a", "b"), "a b ");
     assert_eq!(concat_spaces!("a"), "a ");
+    assert_eq!(concat_spaces!("a"), "a ",);
 }
