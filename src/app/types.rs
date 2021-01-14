@@ -18,6 +18,9 @@ pub struct Args {
     /// Target bitrate (in bits/sec)
     #[structopt(long, default_value = "2000000")]
     pub video_bitrate: u32,
+
+    #[structopt(short, long, parse(from_occurrences))]
+    pub verbose: u8,
 }
 
 // JSON messages we communicate with

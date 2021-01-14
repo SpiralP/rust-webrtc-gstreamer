@@ -3,7 +3,6 @@ use tracing_subscriber::{filter::EnvFilter, prelude::*};
 
 pub fn initialize(debug: bool, other_crates: bool) {
     static ONCE: Once = Once::new();
-
     ONCE.call_once(move || {
         let level = if debug { "debug" } else { "info" };
         let my_crate_name = env!("CARGO_PKG_NAME").replace("-", "_");
@@ -18,7 +17,7 @@ pub fn initialize(debug: bool, other_crates: bool) {
 
         tracing_subscriber::fmt()
             .with_env_filter(filter)
-            .with_target(false)
+            .with_target(other_crates)
             .with_thread_ids(false)
             .with_thread_names(false)
             .with_ansi(true)

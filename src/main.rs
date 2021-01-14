@@ -46,9 +46,12 @@ async fn main(args: Args) -> Result<()> {
         eprintln!("enable_ansi_support: {}", e);
     }
 
-    logger::initialize(true, false);
+    logger::initialize(
+        cfg!(debug_assertions) || args.verbose > 0,
+        args.verbose >= 2,
+    );
 
-    debug!("{:#?}", args);
+    info!("{:#?}", args);
 
     if env::var("GST_DEBUG").is_err() {
         // show warnings
