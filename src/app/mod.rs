@@ -104,7 +104,7 @@ impl App {
                 "tcpserversrc host={ip} port={port} name=tcpserversrc ! queue",
                 // set-timestamps=true makes it weird!
                 "  ! tsparse",
-                "  ! tsdemux name=demux latency=700",
+                "  ! tsdemux name=demux latency=100",
                 ////////////////
                 // video
                 "demux. ! queue",
@@ -116,7 +116,7 @@ impl App {
                 "  ! videoconvert ! videoscale ! videorate ! queue",
                 // "  ! video/x-raw,width=1280,height=720,framerate=30/1",
                 "  ! vp9enc",
-                "    end-usage=cbr",
+                "    end-usage=vbr",
                 "    cpu-used={cpu_used}",
                 "    deadline=1",
                 "    threads={threads}",
@@ -426,7 +426,6 @@ impl App {
 
                     tokio::time::delay_for(Duration::from_secs(1)).await;
                 }
-                println!("exitinG!!!");
             });
 
             receiver.fuse()

@@ -1,6 +1,6 @@
 use gst_webrtc::WebRTCPeerConnectionState;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     io::{stderr, Stderr, Write},
     net::SocketAddr,
     os::raw::c_int,
@@ -45,7 +45,7 @@ pub struct Stats {
     state: State,
     clients: HashMap<SocketAddr, ClientStats>,
     last_print: Instant,
-    last_total_bytes: u64,
+    total_bytes_history: VecDeque<u64>,
 }
 impl Stats {
     pub fn new() -> Self {
@@ -54,7 +54,7 @@ impl Stats {
             state: State::Idle,
             clients: Default::default(),
             last_print: Instant::now(),
-            last_total_bytes: 0,
+            total_bytes_history: VecDeque::new(),
         }
     }
 
@@ -65,13 +65,24 @@ impl Stats {
             total_bytes += client.total_bytes_sent;
         }
 
-        let secs = (now - self.last_print).as_secs_f32();
+        if self.total_bytes_history.len() >= 10 {
+            self.total_bytes_history.pop_front();
+        }
+        self.total_bytes_history.push_back(total_bytes);
+
+        let mut average_total_bytes = 0.0;
+        if let Some(&front) = self.total_bytes_history.front() {
+            if let Some(&back) = self.total_bytes_history.back() {
+                average_total_bytes =
+                    (back as f32 - front as f32) / self.total_bytes_history.len() as f32;
+            }
+        }
 
         let status = format!(
             "{:?} - {} clients - sending {:.1} KiB/s",
             self.state,
             self.clients.len(),
-            ((total_bytes - self.last_total_bytes) as f32 / secs) / 1024.0
+            average_total_bytes / 1024.0
         );
         write!(
             self.stderr,
@@ -81,7 +92,6 @@ impl Stats {
         .unwrap();
         self.stderr.flush().unwrap();
 
-        self.last_total_bytes = total_bytes;
         self.last_print = now;
     }
 
