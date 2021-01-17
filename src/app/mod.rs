@@ -20,6 +20,7 @@ use std::{
     ops,
     os::raw::c_int,
     sync::{Arc, Weak},
+    time::Duration,
 };
 use tracing::*;
 use warp::{path::FullPath, ws, Filter};
@@ -332,9 +333,8 @@ impl App {
                 None
             })?;
 
-            receiver
-        }
-        .fuse();
+            receiver.fuse()
+        };
 
         let mut ice_candidate_stream = {
             let (sender, receiver) = mpsc::unbounded();
@@ -360,9 +360,77 @@ impl App {
                 None
             })?;
 
-            receiver
-        }
-        .fuse();
+            receiver.fuse()
+        };
+
+        let mut stats_stream = {
+            let (sender, receiver) = mpsc::unbounded();
+
+            let webrtcbin = webrtcbin.clone();
+            tokio::spawn(async move {
+                while !sender.is_closed() {
+                    let sender = sender.clone();
+                    let promise = gst::Promise::with_change_func(move |structure| {
+                        let structure = structure.unwrap().unwrap();
+                        // println!("{:#?}", structure);
+
+                        let mut total_bytes_sent: u64 = 0;
+                        let mut total_packets_received: u64 = 0;
+                        let mut total_packets_lost: c_int = 0;
+
+                        // rtp-remote-inbound-stream-stats_
+                        //   packets-received
+                        //   packets-lost
+                        //   jitter
+
+                        // rtp-outbound-stream-stats_
+                        //   bytes-sent
+                        for field in structure.fields() {
+                            if field.starts_with("rtp-remote-inbound-stream-stats_") {
+                                let sub_structure =
+                                    structure.get::<gst::Structure>(field).unwrap().unwrap();
+
+                                total_packets_received += sub_structure
+                                    .get::<u64>("packets-received")
+                                    .unwrap()
+                                    .unwrap();
+
+                                total_packets_lost +=
+                                    sub_structure.get::<c_int>("packets-lost").unwrap().unwrap();
+                            } else if field.starts_with("rtp-outbound-stream-stats_") {
+                                let sub_structure =
+                                    structure.get::<gst::Structure>(field).unwrap().unwrap();
+
+                                total_bytes_sent +=
+                                    sub_structure.get::<u64>("bytes-sent").unwrap().unwrap();
+                            }
+                        }
+
+                        if total_bytes_sent != 0
+                            || total_packets_received != 0
+                            || total_packets_lost != 0
+                        {
+                            sender
+                                .unbounded_send((
+                                    total_bytes_sent,
+                                    total_packets_received,
+                                    total_packets_lost,
+                                ))
+                                .unwrap();
+                        }
+                    });
+
+                    webrtcbin
+                        .emit("get-stats", &[&None::<gst::Pad>, &promise])
+                        .unwrap();
+
+                    tokio::time::delay_for(Duration::from_secs(1)).await;
+                }
+                println!("exitinG!!!");
+            });
+
+            receiver.fuse()
+        };
 
         // Add ghost pads for connecting to the input
         let audio_queue = peer_bin
@@ -487,6 +555,16 @@ impl App {
                     ws_sender
                         .send(ws::Message::text(serde_json::to_string(&json_msg)?))
                         .await?;
+                },
+
+                (total_bytes_sent, total_packets_received, total_packets_lost) = stats_stream.select_next_some() => {
+                    let mut stats = self.stats.lock().await;
+                    stats.update_client_stats(
+                        addr,
+                        total_bytes_sent,
+                        total_packets_received,
+                        total_packets_lost,
+                    );
                 },
 
                 message = webrtcbin_bus_stream.select_next_some() => {

@@ -3,6 +3,8 @@ use std::{
     collections::HashMap,
     io::{stderr, Stderr, Write},
     net::SocketAddr,
+    os::raw::c_int,
+    time::Instant,
 };
 use tracing::*;
 
@@ -20,10 +22,30 @@ pub enum State {
 }
 
 #[derive(Debug)]
+pub struct ClientStats {
+    state: WebRTCPeerConnectionState,
+    total_bytes_sent: u64,
+    total_packets_received: u64,
+    total_packets_lost: c_int,
+}
+impl ClientStats {
+    pub fn new() -> Self {
+        Self {
+            state: WebRTCPeerConnectionState::New,
+            total_bytes_sent: 0,
+            total_packets_received: 0,
+            total_packets_lost: 0,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Stats {
     stderr: Stderr,
     state: State,
-    clients: HashMap<SocketAddr, WebRTCPeerConnectionState>,
+    clients: HashMap<SocketAddr, ClientStats>,
+    last_print: Instant,
+    last_total_bytes: u64,
 }
 impl Stats {
     pub fn new() -> Self {
@@ -31,11 +53,26 @@ impl Stats {
             stderr: stderr(),
             state: State::Idle,
             clients: Default::default(),
+            last_print: Instant::now(),
+            last_total_bytes: 0,
         }
     }
 
     pub fn print(&mut self) {
-        let status = format!("{:?} - {} clients", self.state, self.clients.len());
+        let now = Instant::now();
+        let mut total_bytes = 0;
+        for client in self.clients.values() {
+            total_bytes += client.total_bytes_sent;
+        }
+
+        let secs = (now - self.last_print).as_secs_f32();
+
+        let status = format!(
+            "{:?} - {} clients - sending {:.1} KiB/s",
+            self.state,
+            self.clients.len(),
+            ((total_bytes - self.last_total_bytes) as f32 / secs) / 1024.0
+        );
         write!(
             self.stderr,
             "{}{}{}{}{}",
@@ -43,6 +80,9 @@ impl Stats {
         )
         .unwrap();
         self.stderr.flush().unwrap();
+
+        self.last_total_bytes = total_bytes;
+        self.last_print = now;
     }
 
     pub fn set_state(&mut self, state: State) {
@@ -52,7 +92,7 @@ impl Stats {
 
     pub fn on_client_connected(&mut self, addr: SocketAddr) {
         info!("client connected: {:?}", addr);
-        self.clients.insert(addr, WebRTCPeerConnectionState::New);
+        self.clients.insert(addr, ClientStats::new());
     }
 
     pub fn on_client_disconnected(&mut self, addr: SocketAddr) {
@@ -62,6 +102,23 @@ impl Stats {
 
     pub fn on_client_state(&mut self, addr: SocketAddr, state: WebRTCPeerConnectionState) {
         info!("client {:?} {:?}", addr, state);
-        // self.clients.insert(addr, state);
+        if let Some(client) = self.clients.get_mut(&addr) {
+            client.state = state;
+        }
+    }
+
+    pub fn update_client_stats(
+        &mut self,
+        addr: SocketAddr,
+        total_bytes_sent: u64,
+        total_packets_received: u64,
+        total_packets_lost: c_int,
+    ) {
+        // println!("{} {}", total_packets_received, total_packets_lost);
+        if let Some(client) = self.clients.get_mut(&addr) {
+            client.total_bytes_sent = total_bytes_sent;
+            client.total_packets_received = total_packets_received;
+            client.total_packets_lost = total_packets_lost;
+        }
     }
 }

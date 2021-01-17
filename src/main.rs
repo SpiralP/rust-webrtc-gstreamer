@@ -67,7 +67,7 @@ async fn main(args: Args) -> Result<()> {
 
     tokio::spawn(async move {
         loop {
-            tokio::time::delay_for(Duration::from_millis(500)).await;
+            tokio::time::delay_for(Duration::from_secs(1)).await;
             let mut stats = stats.lock().await;
             stats.print();
         }
