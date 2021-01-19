@@ -104,7 +104,7 @@ impl App {
                 "tcpserversrc host={ip} port={port} name=tcpserversrc ! queue",
                 // set-timestamps=true makes it weird!
                 "  ! tsparse",
-                "  ! tsdemux name=demux latency=100",
+                "  ! tsdemux name=demux latency=700",
                 ////////////////
                 // video
                 "demux. ! queue",
@@ -116,7 +116,7 @@ impl App {
                 "  ! videoconvert ! videoscale ! videorate ! queue",
                 // "  ! video/x-raw,width=1280,height=720,framerate=30/1",
                 "  ! vp9enc",
-                "    end-usage=vbr",
+                "    end-usage=cbr",
                 "    cpu-used={cpu_used}",
                 "    deadline=1",
                 "    threads={threads}",
