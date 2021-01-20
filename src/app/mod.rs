@@ -110,8 +110,7 @@ impl App {
                 "demux. ! queue",
                 // "videotestsrc pattern=snow is-live=true do-timestamp=true ! queue",
                 // decode h264
-                "  ! h264parse",
-                "  ! avdec_h264 ! queue",
+                "  ! decodebin ! queue",
                 // encode vp9 (rtp)
                 "  ! videoconvert ! videoscale ! videorate ! queue",
                 // "  ! video/x-raw,width=1280,height=720,framerate=30/1",
@@ -136,8 +135,7 @@ impl App {
                 "demux. ! queue",
                 // "audiotestsrc is-live=true ! queue",
                 // decode aac
-                "  ! aacparse",
-                "  ! avdec_aac ! queue",
+                "  ! decodebin ! queue",
                 // encode opus (rtp)
                 "  ! audioconvert ! audioresample ! queue",
                 "  ! audio/x-raw,channels=2",

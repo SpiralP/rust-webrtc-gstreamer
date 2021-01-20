@@ -33,14 +33,14 @@ cargo install --git https://github.com/SpiralP/rust-webrtc-gstreamer.git
 
 ## Input
 
-strict 2-stream tcp mpeg-ts:
-
-- h264
-- aac (2 channels)
+tries to auto-detect via [decodebin](https://gstreamer.freedesktop.org/documentation/playback/decodebin.html), but must be 2-stream tcp mpeg-ts
 
 ---
 
 [OBS](https://obsproject.com/) with tcp url like `tcp://127.0.0.1:1935/`
+
+- x264 works
+- my OBS' NVENC H.264 doesn't work, but ffmpeg's h264_nvenc does work
 
 ---
 
