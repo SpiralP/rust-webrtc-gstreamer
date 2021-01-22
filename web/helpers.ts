@@ -1,4 +1,4 @@
-export type JsonMsg = JsonMsgSdp | JsonMsgIce;
+export type JsonMsg = JsonMsgSdp | JsonMsgIce | JsonMsgStats;
 
 export interface JsonMsgSdp {
   sdp: string;
@@ -8,6 +8,13 @@ export interface JsonMsgIce {
   ice: {
     candidate: string;
     sdpMLineIndex: number;
+  };
+}
+
+export interface JsonMsgStats {
+  stats: {
+    totalPacketsReceived: number;
+    totalPacketsLost: number;
   };
 }
 

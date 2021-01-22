@@ -1515,6 +1515,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
+ "speedometer",
  "structopt",
  "tokio",
  "tracing",
@@ -1694,6 +1695,15 @@ dependencies = [
  "cfg-if 1.0.0",
  "libc",
  "winapi 0.3.9",
+]
+
+[[package]]
+name = "speedometer"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2789736092fa21b44baf8590acb4b360cb91f0f597bd6c1f1741ca9644c95c1e"
+dependencies = [
+ "failure",
 ]
 
 [[package]]

@@ -17,6 +17,7 @@ paw = "1"
 serde = "1"
 serde_derive = "1"
 serde_json = "1"
+speedometer = "0.2.2"
 structopt = { version = "0.3", features = ["paw"] }
 # upgrade when warp upgrades
 tokio = { version = "0.2", features = ["full"] }

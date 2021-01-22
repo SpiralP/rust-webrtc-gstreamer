@@ -34,6 +34,12 @@ pub enum JsonMsg {
         candidate: String,
         sdp_m_line_index: u32,
     },
+
+    #[serde(rename_all = "camelCase")]
+    Stats {
+        total_packets_received: usize,
+        total_packets_lost: usize,
+    },
 }
 
 #[test]

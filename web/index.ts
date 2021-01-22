@@ -5,6 +5,7 @@ import {
   JsonMsgSdp,
   isJsonMsgIce,
   sleep,
+  JsonMsgStats,
 } from "./helpers";
 
 const rtcConfiguration: RTCConfiguration = {
@@ -15,10 +16,15 @@ const rtcConfiguration: RTCConfiguration = {
 const video = document.getElementById("video") as HTMLVideoElement;
 
 let retryTimeoutId: number | undefined;
+let statsLoopIntervalId: number | undefined;
 function main(delayUdp: boolean = false) {
   if (retryTimeoutId) {
     clearTimeout(retryTimeoutId);
     retryTimeoutId = undefined;
+  }
+  if (statsLoopIntervalId) {
+    clearTimeout(statsLoopIntervalId);
+    statsLoopIntervalId = undefined;
   }
 
   const peerConnection = new RTCPeerConnection(rtcConfiguration);
@@ -76,6 +82,30 @@ function main(delayUdp: boolean = false) {
 
         main(true);
       }, 3000);
+    } else if (peerConnection.connectionState === "connected") {
+      if (statsLoopIntervalId) {
+        clearTimeout(statsLoopIntervalId);
+        statsLoopIntervalId = undefined;
+      }
+      statsLoopIntervalId = setInterval(async () => {
+        const stats = await peerConnection.getStats();
+        let totalPacketsLost = 0;
+        let totalPacketsReceived = 0;
+        for (const [key, value] of Array.from(stats.entries())) {
+          if (key.startsWith("RTCInboundRTP")) {
+            totalPacketsLost += value.packetsLost;
+            totalPacketsReceived += value.packetsReceived;
+          }
+        }
+
+        const statsMsg: JsonMsgStats = {
+          stats: {
+            totalPacketsReceived,
+            totalPacketsLost,
+          },
+        };
+        signalingConnection.send(JSON.stringify(statsMsg));
+      }, 1000);
     }
   });
   peerConnection.addEventListener("iceconnectionstatechange", () => {
@@ -131,12 +161,19 @@ function main(delayUdp: boolean = false) {
     console.log("WebSocket connected");
   });
   signalingConnection.onclose = () => {
+    if (statsLoopIntervalId) {
+      clearTimeout(statsLoopIntervalId);
+      statsLoopIntervalId = undefined;
+    }
+
     console.log("WebSocket closed, retrying in a few seconds");
     if (retryTimeoutId) {
       clearTimeout(retryTimeoutId);
       retryTimeoutId = undefined;
     }
     retryTimeoutId = setTimeout(() => {
+      peerConnection.close();
+
       main(delayUdp);
     }, 10000);
   };

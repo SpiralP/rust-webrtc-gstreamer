@@ -361,7 +361,7 @@ impl App {
             receiver.fuse()
         };
 
-        let mut stats_stream = {
+        let mut total_bytes_sent_stream = {
             let (sender, receiver) = mpsc::unbounded();
 
             let webrtcbin = webrtcbin.clone();
@@ -373,29 +373,11 @@ impl App {
                         // println!("{:#?}", structure);
 
                         let mut total_bytes_sent: u64 = 0;
-                        let mut total_packets_received: u64 = 0;
-                        let mut total_packets_lost: c_int = 0;
-
-                        // rtp-remote-inbound-stream-stats_
-                        //   packets-received
-                        //   packets-lost
-                        //   jitter
 
                         // rtp-outbound-stream-stats_
                         //   bytes-sent
                         for field in structure.fields() {
-                            if field.starts_with("rtp-remote-inbound-stream-stats_") {
-                                let sub_structure =
-                                    structure.get::<gst::Structure>(field).unwrap().unwrap();
-
-                                total_packets_received += sub_structure
-                                    .get::<u64>("packets-received")
-                                    .unwrap()
-                                    .unwrap();
-
-                                total_packets_lost +=
-                                    sub_structure.get::<c_int>("packets-lost").unwrap().unwrap();
-                            } else if field.starts_with("rtp-outbound-stream-stats_") {
+                            if field.starts_with("rtp-outbound-stream-stats_") {
                                 let sub_structure =
                                     structure.get::<gst::Structure>(field).unwrap().unwrap();
 
@@ -404,17 +386,8 @@ impl App {
                             }
                         }
 
-                        if total_bytes_sent != 0
-                            || total_packets_received != 0
-                            || total_packets_lost != 0
-                        {
-                            sender
-                                .unbounded_send((
-                                    total_bytes_sent,
-                                    total_packets_received,
-                                    total_packets_lost,
-                                ))
-                                .unwrap();
+                        if total_bytes_sent != 0 {
+                            sender.unbounded_send(total_bytes_sent).unwrap();
                         }
                     });
 
@@ -554,13 +527,11 @@ impl App {
                         .await?;
                 },
 
-                (total_bytes_sent, total_packets_received, total_packets_lost) = stats_stream.select_next_some() => {
+                total_bytes_sent = total_bytes_sent_stream.select_next_some() => {
                     let mut stats = self.stats.lock().await;
                     stats.update_client_stats(
                         addr,
-                        total_bytes_sent,
-                        total_packets_received,
-                        total_packets_lost,
+                        total_bytes_sent as usize,
                     );
                 },
 
@@ -644,6 +615,15 @@ impl App {
                                     &[&sdp_m_line_index, &candidate],
                                 )
                                 .unwrap();
+                            }
+
+                            JsonMsg::Stats { total_packets_received, total_packets_lost } => {
+                                let mut stats = self.stats.lock().await;
+                                stats.update_remote_stats(
+                                    addr,
+                                    total_packets_received,
+                                    total_packets_lost
+                                );
                             }
                         }
                     }

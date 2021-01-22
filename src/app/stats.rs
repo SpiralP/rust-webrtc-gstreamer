@@ -1,10 +1,9 @@
 use gst_webrtc::WebRTCPeerConnectionState;
+use speedometer::Speedometer;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     io::{stderr, Stderr, Write},
     net::SocketAddr,
-    os::raw::c_int,
-    time::Instant,
 };
 use tracing::*;
 
@@ -24,9 +23,9 @@ pub enum State {
 #[derive(Debug)]
 pub struct ClientStats {
     state: WebRTCPeerConnectionState,
-    total_bytes_sent: u64,
-    total_packets_received: u64,
-    total_packets_lost: c_int,
+    total_bytes_sent: usize,
+    total_packets_received: usize,
+    total_packets_lost: usize,
 }
 impl ClientStats {
     pub fn new() -> Self {
@@ -44,8 +43,11 @@ pub struct Stats {
     stderr: Stderr,
     state: State,
     clients: HashMap<SocketAddr, ClientStats>,
-    last_print: Instant,
-    total_bytes_history: VecDeque<u64>,
+    speed_bytes: Speedometer,
+    last_total_bytes: usize,
+    speed_loss: Speedometer,
+    last_total_packets_received: usize,
+    last_total_packets_lost: usize,
 }
 impl Stats {
     pub fn new() -> Self {
@@ -53,36 +55,54 @@ impl Stats {
             stderr: stderr(),
             state: State::Idle,
             clients: Default::default(),
-            last_print: Instant::now(),
-            total_bytes_history: VecDeque::new(),
+            speed_bytes: Default::default(),
+            last_total_bytes: 0,
+            speed_loss: Default::default(),
+            last_total_packets_received: 0,
+            last_total_packets_lost: 0,
         }
     }
 
     pub fn print(&mut self) {
-        let now = Instant::now();
-        let mut total_bytes = 0;
+        let mut total_bytes_sent = 0;
+        let mut total_packets_received = 0;
+        let mut total_packets_lost = 0;
         for client in self.clients.values() {
-            total_bytes += client.total_bytes_sent;
+            total_bytes_sent += client.total_bytes_sent;
+            total_packets_received += client.total_packets_received;
+            total_packets_lost += client.total_packets_lost;
         }
 
-        if self.total_bytes_history.len() >= 10 {
-            self.total_bytes_history.pop_front();
-        }
-        self.total_bytes_history.push_back(total_bytes);
+        let diff_total_bytes_sent = total_bytes_sent
+            .checked_sub(self.last_total_bytes)
+            .unwrap_or(0);
+        self.last_total_bytes = total_bytes_sent;
+        self.speed_bytes.entry(diff_total_bytes_sent);
 
-        let mut average_total_bytes = 0.0;
-        if let Some(&front) = self.total_bytes_history.front() {
-            if let Some(&back) = self.total_bytes_history.back() {
-                average_total_bytes =
-                    (back as f32 - front as f32) / self.total_bytes_history.len() as f32;
-            }
-        }
+        let diff_total_packets_received = total_packets_received
+            .checked_sub(self.last_total_packets_received)
+            .unwrap_or(0);
+        self.last_total_packets_received = total_packets_received;
+
+        let diff_total_packets_lost = total_packets_lost
+            .checked_sub(self.last_total_packets_lost)
+            .unwrap_or(0);
+        self.last_total_packets_lost = total_packets_received;
+
+        let loss = if diff_total_packets_received == 0 {
+            0.0
+        } else {
+            diff_total_packets_lost as f32 / diff_total_packets_received as f32
+        };
+
+        self.speed_loss.entry((loss * 100.0) as usize);
 
         let status = format!(
-            "{:?} - {} clients - sending {:.1} KiB/s",
+            "{:?} - {} clients - sending {} KiB/s - {}% loss",
             self.state,
             self.clients.len(),
-            average_total_bytes / 1024.0
+            self.speed_bytes.measure().unwrap() / 1024,
+            self.speed_loss.measure().unwrap()
         );
         write!(
             self.stderr,
@@ -91,8 +111,6 @@ impl Stats {
         )
         .unwrap();
         self.stderr.flush().unwrap();
-
-        self.last_print = now;
     }
 
     pub fn set_state(&mut self, state: State) {
@@ -117,16 +135,20 @@ impl Stats {
         }
     }
 
-    pub fn update_client_stats(
-        &mut self,
-        addr: SocketAddr,
-        total_bytes_sent: u64,
-        total_packets_received: u64,
-        total_packets_lost: c_int,
-    ) {
+    pub fn update_client_stats(&mut self, addr: SocketAddr, total_bytes_sent: usize) {
         // println!("{} {}", total_packets_received, total_packets_lost);
         if let Some(client) = self.clients.get_mut(&addr) {
             client.total_bytes_sent = total_bytes_sent;
+        }
+    }
+
+    pub fn update_remote_stats(
+        &mut self,
+        addr: SocketAddr,
+        total_packets_received: usize,
+        total_packets_lost: usize,
+    ) {
+        if let Some(client) = self.clients.get_mut(&addr) {
             client.total_packets_received = total_packets_received;
             client.total_packets_lost = total_packets_lost;
         }
