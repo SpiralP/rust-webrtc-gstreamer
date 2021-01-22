@@ -21,6 +21,9 @@ pub struct Args {
 
     #[structopt(short, long, parse(from_occurrences))]
     pub verbose: u8,
+
+    #[structopt(long)]
+    pub udp: bool,
 }
 
 // JSON messages we communicate with

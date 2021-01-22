@@ -99,11 +99,30 @@ impl App {
     /// returns (pipeline, video_tee, audio_tee)
     #[tracing::instrument]
     fn setup(args: &Args) -> Result<(Pipeline, Element, Element)> {
+        let (input_component, tsparse_set_timestamps) = if args.udp {
+            (
+                format!(
+                    "udpsrc address={ip} port={port} do-timestamp=false",
+                    ip = args.stream_server.ip(),
+                    port = args.stream_server.port(),
+                ),
+                "true",
+            )
+        } else {
+            (
+                format!(
+                    "tcpserversrc host={ip} port={port} do-timestamp=false",
+                    ip = args.stream_server.ip(),
+                    port = args.stream_server.port(),
+                ),
+                "false",
+            )
+        };
         let pipeline = format!(
             concat_spaces!(
-                "tcpserversrc host={ip} port={port} name=tcpserversrc ! queue",
-                // set-timestamps=true makes it weird!
-                "  ! tsparse",
+                "{input} ! queue",
+                // set-timestamps=true makes it jittery on tcp
+                "  ! tsparse set-timestamps={tsparse_set_timestamps}",
                 "  ! tsdemux name=demux latency=700",
                 ////////////////
                 // video
@@ -145,8 +164,8 @@ impl App {
                 "  ! rtpopuspay pt=97 ! queue",
                 "  ! tee name=audio-tee ! fakesink",
             ),
-            ip = args.stream_server.ip(),
-            port = args.stream_server.port(),
+            input = input_component,
+            tsparse_set_timestamps = tsparse_set_timestamps,
             threads = num_cpus::get(),
             cpu_used = args.cpu_used,
             video_bitrate = args.video_bitrate
