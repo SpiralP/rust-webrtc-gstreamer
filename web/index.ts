@@ -14,7 +14,13 @@ const rtcConfiguration: RTCConfiguration = {
 
 const video = document.getElementById("video") as HTMLVideoElement;
 
+let retryTimeoutId: number | undefined;
 function main(delayUdp: boolean = false) {
+  if (retryTimeoutId) {
+    clearTimeout(retryTimeoutId);
+    retryTimeoutId = undefined;
+  }
+
   const peerConnection = new RTCPeerConnection(rtcConfiguration);
   // @ts-ignore
   global.peerConnection = peerConnection;
@@ -65,6 +71,7 @@ function main(delayUdp: boolean = false) {
           "still in connecting state, retrying with UDP candidates delayed"
         );
         peerConnection.close();
+        signalingConnection.onclose = null;
         signalingConnection.close();
 
         main(true);
@@ -109,14 +116,7 @@ function main(delayUdp: boolean = false) {
       };
       signalingConnection.send(JSON.stringify(answerMsg));
     } else if (isJsonMsgIce(msg)) {
-      if (
-        (delayUdp ||
-          location.hostname === "localhost" ||
-          location.hostname.startsWith("127.0.0.") ||
-          location.hostname.startsWith("10.0.0.") ||
-          location.hostname.startsWith("192.168.1.")) &&
-        msg.ice.candidate.indexOf(" UDP ") !== -1
-      ) {
+      if (delayUdp && msg.ice.candidate.indexOf(" UDP ") !== -1) {
         // fix for chrome on localhost connecting to udp first and
         // causing the video to hang, so we let TCP go first
         await sleep(2000);
@@ -130,12 +130,21 @@ function main(delayUdp: boolean = false) {
   signalingConnection.addEventListener("open", () => {
     console.log("WebSocket connected");
   });
-  signalingConnection.addEventListener("close", () => {
+  signalingConnection.onclose = () => {
     console.log("WebSocket closed, retrying in a few seconds");
-    setTimeout(() => {
+    if (retryTimeoutId) {
+      clearTimeout(retryTimeoutId);
+      retryTimeoutId = undefined;
+    }
+    retryTimeoutId = setTimeout(() => {
       main(delayUdp);
     }, 10000);
-  });
+  };
 }
 
-main();
+main(
+  location.hostname === "localhost" ||
+    location.hostname.startsWith("127.0.0.") ||
+    location.hostname.startsWith("10.0.0.") ||
+    location.hostname.startsWith("192.168.1.")
+);
