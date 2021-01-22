@@ -84,7 +84,7 @@ function main(delayUdp: boolean = false) {
     console.warn("icecandidateerror", event);
   });
 
-  signalingConnection.addEventListener("error", console.error);
+  signalingConnection.addEventListener("error", console.warn);
   signalingConnection.addEventListener("message", async ({ data }) => {
     const msg = JSON.parse(data) as JsonMsg;
 
@@ -125,6 +125,16 @@ function main(delayUdp: boolean = false) {
       console.log("remote candidate", msg.ice.candidate);
       await peerConnection.addIceCandidate(msg.ice);
     }
+  });
+
+  signalingConnection.addEventListener("open", () => {
+    console.log("WebSocket connected");
+  });
+  signalingConnection.addEventListener("close", () => {
+    console.log("WebSocket closed, retrying in a few seconds");
+    setTimeout(() => {
+      main(delayUdp);
+    }, 10000);
   });
 }
 
