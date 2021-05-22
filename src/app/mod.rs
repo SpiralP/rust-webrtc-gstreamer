@@ -159,7 +159,7 @@ impl App {
                 "  ! audioconvert ! audioresample ! queue",
                 "  ! audio/x-raw,channels=2",
                 "  ! opusenc",
-                "    bitrate=128000",
+                "    bitrate={audio_bitrate}",
                 "  ! audio/x-opus ! queue",
                 "  ! rtpopuspay pt=97 ! queue",
                 "  ! tee name=audio-tee ! fakesink",
@@ -168,7 +168,8 @@ impl App {
             tsparse_set_timestamps = tsparse_set_timestamps,
             threads = num_cpus::get(),
             cpu_used = args.cpu_used,
-            video_bitrate = args.video_bitrate
+            video_bitrate = args.video_bitrate,
+            audio_bitrate = args.audio_bitrate,
         );
         let pipeline = gst::parse_launch(&pipeline)?;
         let pipeline = pipeline.downcast::<Pipeline>().expect("not a pipeline");

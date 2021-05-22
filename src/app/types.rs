@@ -15,9 +15,15 @@ pub struct Args {
     #[structopt(long, default_value = "8")]
     pub cpu_used: i8,
 
+    // 100KiB/s
     /// Target bitrate (in bits/sec)
-    #[structopt(long, default_value = "2000000")]
+    #[structopt(long, default_value = "819200")]
     pub video_bitrate: u32,
+
+    // ~16KiB/s
+    /// bitrate (in bits/sec)
+    #[structopt(long, default_value = "128000")]
+    pub audio_bitrate: u32,
 
     #[structopt(short, long, parse(from_occurrences))]
     pub verbose: u8,
