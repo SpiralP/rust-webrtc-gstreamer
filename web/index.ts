@@ -1,11 +1,11 @@
 import {
-  JsonMsgIce,
-  JsonMsg,
-  isJsonMsgSdp,
-  JsonMsgSdp,
   isJsonMsgIce,
-  sleep,
+  isJsonMsgSdp,
+  JsonMsg,
+  JsonMsgIce,
+  JsonMsgSdp,
   JsonMsgStats,
+  sleep,
 } from "./helpers";
 
 const rtcConfiguration: RTCConfiguration = {
@@ -30,7 +30,9 @@ function main(delayUdp: boolean = false) {
   const peerConnection = new RTCPeerConnection(rtcConfiguration);
   // @ts-ignore
   global.peerConnection = peerConnection;
-  const signalingConnection = new WebSocket(`ws://${location.host}/ws`);
+  const signalingConnection = new WebSocket(
+    `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`
+  );
 
   peerConnection.addEventListener("track", (event) => {
     console.log("track", event.streams);
