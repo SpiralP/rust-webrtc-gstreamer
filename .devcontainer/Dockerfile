@@ -1,7 +1,7 @@
 FROM debian:testing
 
 RUN export DEBIAN_FRONTEND=noninteractive \
-  && apt-get -y update \
+  && apt-get -y update \ && apt install npm \
   && apt-get -y install --no-install-recommends \
   git build-essential \
   curl ca-certificates \
