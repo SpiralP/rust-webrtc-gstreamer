@@ -73,20 +73,16 @@ impl Stats {
             total_packets_lost += client.total_packets_lost;
         }
 
-        let diff_total_bytes_sent = total_bytes_sent
-            .checked_sub(self.last_total_bytes)
-            .unwrap_or(0);
+        let diff_total_bytes_sent = total_bytes_sent.saturating_sub(self.last_total_bytes);
         self.last_total_bytes = total_bytes_sent;
         self.speed_bytes.entry(diff_total_bytes_sent);
 
-        let diff_total_packets_received = total_packets_received
-            .checked_sub(self.last_total_packets_received)
-            .unwrap_or(0);
+        let diff_total_packets_received =
+            total_packets_received.saturating_sub(self.last_total_packets_received);
         self.last_total_packets_received = total_packets_received;
 
-        let diff_total_packets_lost = total_packets_lost
-            .checked_sub(self.last_total_packets_lost)
-            .unwrap_or(0);
+        let diff_total_packets_lost =
+            total_packets_lost.saturating_sub(self.last_total_packets_lost);
         self.last_total_packets_lost = total_packets_received;
 
         let loss = if diff_total_packets_received == 0 {

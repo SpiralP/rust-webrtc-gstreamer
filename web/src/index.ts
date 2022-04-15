@@ -29,7 +29,7 @@ function main(delayUdp: boolean = false) {
 
   const peerConnection = new RTCPeerConnection(rtcConfiguration);
   // @ts-ignore
-  global.peerConnection = peerConnection;
+  window.peerConnection = peerConnection;
   const signalingConnection = new WebSocket(
     `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`
   );
@@ -58,7 +58,7 @@ function main(delayUdp: boolean = false) {
     const msg: JsonMsgIce = {
       ice: {
         candidate: candidate.candidate,
-        sdpMLineIndex: candidate.sdpMLineIndex,
+        sdpMLineIndex: candidate.sdpMLineIndex!,
       },
     };
     signalingConnection.send(JSON.stringify(msg));
@@ -144,7 +144,7 @@ function main(delayUdp: boolean = false) {
       await peerConnection.setLocalDescription(answer);
 
       const answerMsg: JsonMsgSdp = {
-        sdp: answer.sdp,
+        sdp: answer.sdp!,
       };
       signalingConnection.send(JSON.stringify(answerMsg));
     } else if (isJsonMsgIce(msg)) {
