@@ -14,6 +14,5 @@ RUN export DEBIAN_FRONTEND=noninteractive \
   gstreamer1.0-libav \
   gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
   gstreamer1.0-nice gstreamer1.0-tools \
-  && npm install --global yarn \
   && curl -sSL 'https://sh.rustup.rs' | sh -s -- -y --default-toolchain none \
   && ~/.cargo/bin/rustup default stable

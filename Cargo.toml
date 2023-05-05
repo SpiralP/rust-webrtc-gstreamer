@@ -1,5 +1,5 @@
 [package]
-name = "rust-webrtc-gstreamer"
+name = "webrtc-gstreamer"
 version = "0.1.0"
 authors = ["SpiralP <spiral.palmer@gmail.com>"]
 edition = "2018"
@@ -7,10 +7,10 @@ edition = "2018"
 [dependencies]
 anyhow = "1"
 futures = "0.3"
-glib = "0.15"
-gst = { package = "gstreamer", version = "0.18", features = ["v1_18"] }
-gst-sdp = { package = "gstreamer-sdp", version = "0.18", features = ["v1_18"] }
-gst-webrtc = { package = "gstreamer-webrtc", version = "0.18", features = ["v1_18"] }
+glib = "0.17"
+gstreamer = "0.20"
+gstreamer-sdp = "0.20"
+gstreamer-webrtc = "0.20"
 nodejs-bundler = { git = "https://github.com/SpiralP/rust-nodejs-bundler.git", features = ["warp"] }
 num_cpus = "1"
 paw = "1"

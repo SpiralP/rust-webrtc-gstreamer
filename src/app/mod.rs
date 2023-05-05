@@ -12,9 +12,11 @@ use futures::{
     sink::SinkExt,
     stream::StreamExt,
 };
-use gst::{element_error, message::MessageView, prelude::*, Element, ElementFactory, Pipeline};
-use gst_sdp::SDPMessage;
-use gst_webrtc::*;
+use gstreamer::{
+    element_error, message::MessageView, prelude::*, Element, ElementFactory, Pipeline,
+};
+use gstreamer_sdp::SDPMessage;
+use gstreamer_webrtc::*;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs},
     ops,
@@ -171,7 +173,7 @@ impl App {
             video_bitrate = args.video_bitrate,
             audio_bitrate = args.audio_bitrate,
         );
-        let pipeline = gst::parse_launch(&pipeline)?;
+        let pipeline = gstreamer::parse_launch(&pipeline)?;
         let pipeline = pipeline.downcast::<Pipeline>().expect("not a pipeline");
 
         let video_tee = pipeline.by_name("video-tee").unwrap();
@@ -190,7 +192,7 @@ impl App {
         {
             debug!("Setting Pipeline to Playing");
             self.pipeline
-                .set_state(gst::State::Playing)
+                .set_state(gstreamer::State::Playing)
                 .expect("Couldn't set pipeline to Playing");
 
             let mut stats = self.stats.lock().await;
@@ -232,7 +234,7 @@ impl App {
                 ))
                 .or(warp::path::full().map(|path: FullPath| {
                     // debug!("http {}", path.as_str());
-                    NODEJS_BUNDLE.as_reply(path)
+                    NODEJS_BUNDLE.as_warp_reply(path)
                 }));
 
             let (warp_shutdown_signal, warp_shutdown_signal_rx) = oneshot::channel();
@@ -266,7 +268,7 @@ impl App {
         }
 
         self.pipeline
-            .set_state(gst::State::Null)
+            .set_state(gstreamer::State::Null)
             .expect("Unable to set the pipeline to the `Null` state");
 
         Ok(())
@@ -283,7 +285,7 @@ impl App {
         let (mut ws_sender, ws_receiver) = websocket.split();
         let mut ws_receiver = ws_receiver.fuse();
 
-        let peer_bin = gst::parse_bin_from_description(
+        let peer_bin = gstreamer::parse_bin_from_description(
             concat_spaces!(
                 "queue name=video-queue leaky=downstream",
                 "  ! webrtcbin.",
@@ -316,7 +318,7 @@ impl App {
                     let webrtcbin = webrtcbin.clone();
                     let sender = sender.clone();
 
-                    gst::Promise::with_change_func(move |reply| {
+                    gstreamer::Promise::with_change_func(move |reply| {
                         // debug!("create-offer callback");
 
                         let structure = reply.unwrap().unwrap();
@@ -326,7 +328,7 @@ impl App {
 
                         let sdp_text = description.sdp().as_text().unwrap();
 
-                        let promise = gst::Promise::with_change_func(move |_| {
+                        let promise = gstreamer::Promise::with_change_func(move |_| {
                             sender.unbounded_send(JsonMsg::Sdp(sdp_text)).unwrap();
                         });
 
@@ -335,7 +337,8 @@ impl App {
                     })
                 };
 
-                webrtcbin.emit_by_name::<()>("create-offer", &[&None::<gst::Structure>, &promise]);
+                webrtcbin
+                    .emit_by_name::<()>("create-offer", &[&None::<gstreamer::Structure>, &promise]);
 
                 None
             });
@@ -350,7 +353,7 @@ impl App {
                 let span = debug_span!("on-ice-candidate");
                 let _enter = span.enter();
 
-                let _webrtcbin = values[0].get::<gst::Element>().unwrap();
+                let _webrtcbin = values[0].get::<gstreamer::Element>().unwrap();
                 let sdp_m_line_index = values[1].get::<u32>().unwrap();
                 let candidate = values[2].get::<String>().unwrap();
 
@@ -377,7 +380,7 @@ impl App {
             tokio::spawn(async move {
                 while !sender.is_closed() {
                     let sender = sender.clone();
-                    let promise = gst::Promise::with_change_func(move |structure| {
+                    let promise = gstreamer::Promise::with_change_func(move |structure| {
                         let structure = structure.unwrap().unwrap();
                         // println!("{:#?}", structure);
 
@@ -387,7 +390,8 @@ impl App {
                         //   bytes-sent
                         for field in structure.fields() {
                             if field.starts_with("rtp-outbound-stream-stats_") {
-                                let sub_structure = structure.get::<gst::Structure>(field).unwrap();
+                                let sub_structure =
+                                    structure.get::<gstreamer::Structure>(field).unwrap();
 
                                 total_bytes_sent += sub_structure.get::<u64>("bytes-sent").unwrap();
                             }
@@ -398,7 +402,7 @@ impl App {
                         }
                     });
 
-                    webrtcbin.emit_by_name::<()>("get-stats", &[&None::<gst::Pad>, &promise]);
+                    webrtcbin.emit_by_name::<()>("get-stats", &[&None::<gstreamer::Pad>, &promise]);
 
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }
@@ -411,7 +415,7 @@ impl App {
         let audio_queue = peer_bin
             .by_name("audio-queue")
             .expect("can't find audio-queue");
-        let audio_sink_pad = gst::GhostPad::with_target(
+        let audio_sink_pad = gstreamer::GhostPad::with_target(
             Some("audio_sink"),
             &audio_queue.static_pad("sink").unwrap(),
         )
@@ -421,7 +425,7 @@ impl App {
         let video_queue = peer_bin
             .by_name("video-queue")
             .expect("can't find video-queue");
-        let video_sink_pad = gst::GhostPad::with_target(
+        let video_sink_pad = gstreamer::GhostPad::with_target(
             Some("video_sink"),
             &video_queue.static_pad("sink").unwrap(),
         )
@@ -448,16 +452,16 @@ impl App {
         // the elements are ready and then an error happens.
         let audio_src_pad = self.audio_tee.request_pad_simple("src_%u").unwrap();
         let audio_block = audio_src_pad
-            .add_probe(gst::PadProbeType::BLOCK_DOWNSTREAM, |_pad, _info| {
-                gst::PadProbeReturn::Ok
+            .add_probe(gstreamer::PadProbeType::BLOCK_DOWNSTREAM, |_pad, _info| {
+                gstreamer::PadProbeReturn::Ok
             })
             .unwrap();
         audio_src_pad.link(&audio_sink_pad)?;
 
         let video_src_pad = self.video_tee.request_pad_simple("src_%u").unwrap();
         let video_block = video_src_pad
-            .add_probe(gst::PadProbeType::BLOCK_DOWNSTREAM, |_pad, _info| {
-                gst::PadProbeReturn::Ok
+            .add_probe(gstreamer::PadProbeType::BLOCK_DOWNSTREAM, |_pad, _info| {
+                gstreamer::PadProbeReturn::Ok
             })
             .unwrap();
         video_src_pad.link(&video_sink_pad)?;
@@ -466,7 +470,7 @@ impl App {
         if peer_bin.sync_state_with_parent().is_err() {
             element_error!(
                 peer_bin,
-                gst::LibraryError::Failed,
+                gstreamer::LibraryError::Failed,
                 ("Failed to set peer bin to Playing")
             );
         }
@@ -476,10 +480,10 @@ impl App {
         video_src_pad.remove_probe(video_block);
 
         let mut webrtcbin_bus_stream = webrtcbin.bus().unwrap().stream().fuse();
-        if self.pipeline.set_state(gst::State::Playing).is_err() {
+        if self.pipeline.set_state(gstreamer::State::Playing).is_err() {
             element_error!(
                 self.pipeline,
-                gst::LibraryError::Failed,
+                gstreamer::LibraryError::Failed,
                 ("Failed to set pipeline to Playing")
             );
         }
@@ -538,7 +542,7 @@ impl App {
                     if let MessageView::PropertyNotify(notify) = message.view() {
                         if let (_object, key, Some(value)) = notify.get() {
                             if key == "connection-state" {
-                                let state = value.get::<gst_webrtc::WebRTCPeerConnectionState>().unwrap();
+                                let state = value.get::<gstreamer_webrtc::WebRTCPeerConnectionState>().unwrap();
                                 // gotta spawn because weird Send *mut c_void error??
                                 let weak_app = self.downgrade();
                                 tokio::spawn(async move {
@@ -549,7 +553,7 @@ impl App {
                             }
 
                             // else if "ice-connection-state" => {
-                            //     let state = value.get::<gst_webrtc::WebRTCICEConnectionState>().unwrap();
+                            //     let state = value.get::<gstreamer_webrtc::WebRTCICEConnectionState>().unwrap();
                             //     debug!("!! {:?} {:?}", key, state);
                             // }
                         }
@@ -581,7 +585,7 @@ impl App {
                                 );
 
                                 let (sender, receiver) = oneshot::channel();
-                                let promise = gst::Promise::with_change_func(move |_reply| {
+                                let promise = gstreamer::Promise::with_change_func(move |_reply| {
                                     sender.send(()).unwrap();
                                 });
 
@@ -621,19 +625,19 @@ impl App {
         }
     }
 
-    fn remove_peer(&self, peer_bin: &gst::Bin) {
+    fn remove_peer(&self, peer_bin: &gstreamer::Bin) {
         // Block the tees shortly for removal
         let audio_tee_sinkpad = self.audio_tee.static_pad("sink").unwrap();
         let audio_block = audio_tee_sinkpad
-            .add_probe(gst::PadProbeType::BLOCK_DOWNSTREAM, |_pad, _info| {
-                gst::PadProbeReturn::Ok
+            .add_probe(gstreamer::PadProbeType::BLOCK_DOWNSTREAM, |_pad, _info| {
+                gstreamer::PadProbeReturn::Ok
             })
             .unwrap();
 
         let video_tee_sinkpad = self.video_tee.static_pad("sink").unwrap();
         let video_block = video_tee_sinkpad
-            .add_probe(gst::PadProbeType::BLOCK_DOWNSTREAM, |_pad, _info| {
-                gst::PadProbeReturn::Ok
+            .add_probe(gstreamer::PadProbeType::BLOCK_DOWNSTREAM, |_pad, _info| {
+                gstreamer::PadProbeReturn::Ok
             })
             .unwrap();
 
@@ -657,24 +661,26 @@ impl App {
 
         // Then remove the peer bin gracefully from the pipeline
         let _ = self.pipeline.remove(peer_bin);
-        let _ = peer_bin.set_state(gst::State::Null);
+        let _ = peer_bin.set_state(gstreamer::State::Null);
 
-        // self.audio_tee.set_state(gst::State::Playing).unwrap();
-        // self.video_tee.set_state(gst::State::Playing).unwrap();
+        // self.audio_tee.set_state(gstreamer::State::Playing).unwrap();
+        // self.video_tee.set_state(gstreamer::State::Playing).unwrap();
         // debug!("Setting Pipeline to Playing");
         // self.pipeline
-        //     .set_state(gst::State::Playing)
+        //     .set_state(gstreamer::State::Playing)
         //     .expect("Couldn't set pipeline to Playing");
 
         debug!("Removed peer");
     }
 
     /// returns true if should cleanup and return
-    async fn handle_pipeline_message(&self, message: gst::Message) -> Result<bool> {
+    async fn handle_pipeline_message(&self, message: gstreamer::Message) -> Result<bool> {
         match message.view() {
             MessageView::StateChanged(message) => {
                 if let Some(src) = message.src() {
-                    if src.is::<gst::Pipeline>() && message.current() == gst::State::Playing {
+                    if src.is::<gstreamer::Pipeline>()
+                        && message.current() == gstreamer::State::Playing
+                    {
                         let mut stats = self.stats.lock().await;
                         stats.set_state(stats::State::Streaming);
                     }
@@ -696,7 +702,7 @@ impl App {
                         .map(|s| String::from(s.path_string()))
                         .unwrap_or_else(|| String::from("None")),
                     err.error(),
-                    err.debug().unwrap_or_else(|| String::from("None")),
+                    err.debug().unwrap_or_else(|| String::from("None").into()),
                 );
             }
 
@@ -716,7 +722,7 @@ trait PipelineMake {
 }
 impl PipelineMake for Pipeline {
     fn make(&self, kind: &str) -> Result<Element> {
-        let element = ElementFactory::make(kind, None)?;
+        let element = ElementFactory::make(kind).build()?;
         self.add(&element)?;
         Ok(element)
     }

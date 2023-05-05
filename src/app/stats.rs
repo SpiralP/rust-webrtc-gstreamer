@@ -1,4 +1,4 @@
-use gst_webrtc::WebRTCPeerConnectionState;
+use gstreamer_webrtc::WebRTCPeerConnectionState;
 use speedometer::Speedometer;
 use std::{
     collections::HashMap,

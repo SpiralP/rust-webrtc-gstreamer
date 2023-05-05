@@ -28,7 +28,7 @@ fn check_plugins() -> Result<()> {
         "opus",
     ];
 
-    let registry = gst::Registry::get();
+    let registry = gstreamer::Registry::get();
     for n in &needed {
         if registry.find_plugin(n).is_none() {
             bail!("Missing plugin: {:?}", n);
@@ -59,7 +59,7 @@ async fn main(args: Args) -> Result<()> {
     }
 
     // Initialize GStreamer first
-    gst::init()?;
+    gstreamer::init()?;
     check_plugins()?;
 
     // Create our application state
