@@ -173,7 +173,7 @@ impl App {
             video_bitrate = args.video_bitrate,
             audio_bitrate = args.audio_bitrate,
         );
-        let pipeline = gstreamer::parse_launch(&pipeline)?;
+        let pipeline = gstreamer::parse::launch(&pipeline)?;
         let pipeline = pipeline.downcast::<Pipeline>().expect("not a pipeline");
 
         let video_tee = pipeline.by_name("video-tee").unwrap();
@@ -285,7 +285,7 @@ impl App {
         let (mut ws_sender, ws_receiver) = websocket.split();
         let mut ws_receiver = ws_receiver.fuse();
 
-        let peer_bin = gstreamer::parse_bin_from_description(
+        let peer_bin = gstreamer::parse::bin_from_description(
             concat_spaces!(
                 "queue name=video-queue leaky=downstream",
                 "  ! webrtcbin.",
@@ -415,21 +415,15 @@ impl App {
         let audio_queue = peer_bin
             .by_name("audio-queue")
             .expect("can't find audio-queue");
-        let audio_sink_pad = gstreamer::GhostPad::with_target(
-            Some("audio_sink"),
-            &audio_queue.static_pad("sink").unwrap(),
-        )
-        .unwrap();
+        let audio_sink_pad =
+            gstreamer::GhostPad::with_target(&audio_queue.static_pad("sink").unwrap()).unwrap();
         peer_bin.add_pad(&audio_sink_pad).unwrap();
 
         let video_queue = peer_bin
             .by_name("video-queue")
             .expect("can't find video-queue");
-        let video_sink_pad = gstreamer::GhostPad::with_target(
-            Some("video_sink"),
-            &video_queue.static_pad("sink").unwrap(),
-        )
-        .unwrap();
+        let video_sink_pad =
+            gstreamer::GhostPad::with_target(&video_queue.static_pad("sink").unwrap()).unwrap();
         peer_bin.add_pad(&video_sink_pad).unwrap();
 
         self.pipeline.add(&peer_bin).unwrap();

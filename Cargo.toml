@@ -7,11 +7,13 @@ edition = "2018"
 [dependencies]
 anyhow = "1"
 futures = "0.3"
-glib = "0.17"
-gstreamer = "0.20"
-gstreamer-sdp = "0.20"
-gstreamer-webrtc = "0.20"
-nodejs-bundler = { git = "https://github.com/SpiralP/rust-nodejs-bundler.git", features = ["warp"] }
+glib = "0.19"
+gstreamer = "0.22"
+gstreamer-sdp = "0.22"
+gstreamer-webrtc = "0.22"
+nodejs-bundler = { git = "https://github.com/SpiralP/rust-nodejs-bundler.git", features = [
+    "warp",
+] }
 num_cpus = "1"
 paw = "1"
 serde = "1"

@@ -40,7 +40,7 @@
                   || baseName == "package-lock.json"
                 );
             };
-            npmDepsHash = "sha256-qQ8zEVUXWiYhalRkHjDTOAIrCNNXbl7mQ5T9xdmx53o=";
+            npmDepsHash = "sha256-gi9Tr2H46oTXYmGC8W/QmhpY4Z+tYAGnNTP86T6OYKA=";
             dontNpmBuild = true;
           };
 
@@ -70,7 +70,7 @@
             cargoLock = {
               lockFile = ./Cargo.lock;
               outputHashes = {
-                "nodejs-bundler-3.0.0" = "sha256-B0Rj8npZ2YM7uh1eW+CSxbE8QD+8jNV8+NuGVSb3BBM=";
+                "nodejs-bundler-3.0.0" = "sha256-waaz7FkBuhWnz5LMASrwe73Z8KJX2Dq/i9G43Zna98o=";
               };
             };
 
