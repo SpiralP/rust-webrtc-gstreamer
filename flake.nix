@@ -75,6 +75,7 @@
             };
 
             nativeBuildInputs = with pkgs; [
+              makeWrapper
               nodejs
               pkg-config
               rustPlatform.bindgenHook
@@ -100,6 +101,11 @@
 
             preConfigure = ''
               ln -s ${web}/lib/node_modules/webrtc-gstreamer-web/node_modules ./web/node_modules
+            '';
+
+            postInstall = ''
+              wrapProgram $out/bin/webrtc-gstreamer \
+                --prefix GST_PLUGIN_SYSTEM_PATH_1_0 : "$GST_PLUGIN_SYSTEM_PATH_1_0"
             '';
 
             doCheck = false;
