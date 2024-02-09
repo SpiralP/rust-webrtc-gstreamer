@@ -1,22 +1,33 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-22.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.11";
+    nixpkgs-mozilla.url = "github:mozilla/nixpkgs-mozilla/master";
   };
 
-  outputs = { nixpkgs, ... }:
+  outputs = { nixpkgs, nixpkgs-mozilla, ... }:
     let
       inherit (nixpkgs) lib;
-    in
-    builtins.foldl' lib.recursiveUpdate { } (builtins.map
-      (system:
+
+      makePackage = (system: dev:
         let
           pkgs = import nixpkgs {
             inherit system;
+            overlays = [ nixpkgs-mozilla.overlays.rust ];
           };
 
-          inherit (pkgs) rustPlatform buildNpmPackage;
-
-          web = buildNpmPackage {
+          rust = (pkgs.rustChannelOf {
+            channel = "1.75.0";
+            sha256 = "sha256-SXRtAuO4IqNOQq+nLbrsDFbVk+3aVA8NNpSZsKlVH/8=";
+          }).rust.override {
+            extensions = if dev then [ "rust-src" ] else [ ];
+          };
+          rustPlatform = pkgs.makeRustPlatform {
+            cargo = rust;
+            rustc = rust;
+          };
+        in
+        rec {
+          web = pkgs.buildNpmPackage {
             name = "webrtc-gstreamer-web";
             src = lib.cleanSourceWith {
               src = ./web;
@@ -33,7 +44,7 @@
             dontNpmBuild = true;
           };
 
-          package = rustPlatform.buildRustPackage {
+          default = rustPlatform.buildRustPackage {
             name = "webrtc-gstreamer";
             src = lib.cleanSourceWith rec {
               src = ./.;
@@ -67,7 +78,11 @@
               nodejs
               pkg-config
               rustPlatform.bindgenHook
-            ];
+            ] ++ (if dev then
+              with pkgs.gst_all_1; [
+                gstreamer.bin
+              ] else [ ]);
+
             buildInputs = with pkgs; [
               glib
               openssl
@@ -89,22 +104,13 @@
 
             doCheck = false;
           };
-        in
-        rec {
-          devShells.${system}.default = package.overrideAttrs (old: {
-            nativeBuildInputs = with pkgs; old.nativeBuildInputs ++ [
-              clippy
-              rustfmt
-              rust-analyzer
-            ] ++ (with pkgs.gst_all_1; [
-              gstreamer.bin
-            ]);
-          });
-          packages.${system} = {
-            default = package;
-            web = web;
-          };
-        }
+        });
+    in
+    builtins.foldl' lib.recursiveUpdate { } (builtins.map
+      (system: {
+        devShells.${system} = makePackage system true;
+        packages.${system} = makePackage system false;
+      }
       )
       lib.systems.flakeExposed);
 }
