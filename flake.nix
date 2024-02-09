@@ -67,7 +67,10 @@
               pkg-config
               rustPlatform.bindgenHook
             ] ++ (if dev then
-              with pkgs.gst_all_1; [
+              with pkgs; with pkgs.gst_all_1; [
+                clippy
+                rustfmt
+                rust-analyzer
                 gstreamer.bin
               ] else [ ]);
 
