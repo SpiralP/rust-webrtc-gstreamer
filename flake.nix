@@ -1,10 +1,9 @@
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.11";
-    nixpkgs-mozilla.url = "github:mozilla/nixpkgs-mozilla/master";
   };
 
-  outputs = { nixpkgs, nixpkgs-mozilla, ... }:
+  outputs = { nixpkgs, ... }:
     let
       inherit (nixpkgs) lib;
 
@@ -12,18 +11,6 @@
         let
           pkgs = import nixpkgs {
             inherit system;
-            overlays = [ nixpkgs-mozilla.overlays.rust ];
-          };
-
-          rust = (pkgs.rustChannelOf {
-            channel = "1.75.0";
-            sha256 = "sha256-SXRtAuO4IqNOQq+nLbrsDFbVk+3aVA8NNpSZsKlVH/8=";
-          }).rust.override {
-            extensions = if dev then [ "rust-src" ] else [ ];
-          };
-          rustPlatform = pkgs.makeRustPlatform {
-            cargo = rust;
-            rustc = rust;
           };
         in
         rec {
@@ -44,7 +31,7 @@
             dontNpmBuild = true;
           };
 
-          default = rustPlatform.buildRustPackage {
+          default = pkgs.rustPlatform.buildRustPackage {
             name = "webrtc-gstreamer";
             src = lib.cleanSourceWith rec {
               src = ./.;
