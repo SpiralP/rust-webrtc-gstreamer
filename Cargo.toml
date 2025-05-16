@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 anyhow = "1"
 futures = "0.3"
-glib = "0.19"
+glib = "0.20"
 gstreamer = "0.22"
 gstreamer-sdp = "0.22"
 gstreamer-webrtc = "0.22"
